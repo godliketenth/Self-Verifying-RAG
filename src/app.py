@@ -33,12 +33,35 @@ BADGE = {
     Verdict.CONTRADICTED: ("CONTRADICTED", "#d03b3b"),
 }
 
-EXAMPLES = [
+# Two kinds of demo question, and the contrast between them IS the demo.
+#
+# ANSWERABLE: the supporting Wikipedia articles are in the indexed corpus, so
+# retrieval finds real evidence and claims should come back ENTAILED.
+#
+# EVIDENCE MISSING: real HotpotQA questions whose supporting articles were
+# never indexed (we index 1,000 questions' paragraphs out of 7,405). Nothing
+# in the corpus can support an answer. Retrieval still returns SOMETHING -
+# similarity search always does - so this is precisely the failure mode the
+# project exists to catch: a fluent answer built on loosely-related passages,
+# revealed only by checking each claim against evidence.
+#
+# These are honest demonstrations, not staged failures: the questions are
+# genuine and the system is behaving correctly by flagging them.
+ANSWERABLE = [
     "Were Scott Derrickson and Ed Wood of the same nationality?",
     "What government position was held by the woman who portrayed "
     "Corliss Archer in the film Kiss and Tell?",
     "Which magazine was started first, Arthur's Magazine or First for Women?",
 ]
+
+
+def load_demo_questions(cfg) -> list[dict]:
+    """Questions whose evidence is deliberately absent from the corpus."""
+    f = cfg.data_dir / "demo_questions.json"
+    if not f.exists():
+        return []
+    import json
+    return json.loads(f.read_text())
 
 
 # Loading the embedding model and FAISS index takes a few seconds; cache it
@@ -82,11 +105,40 @@ def main() -> None:
         st.caption(f"Generator: `{cfg.llm.generator_model}`")
         st.caption(f"Helper: `{cfg.llm.helper_model}`")
 
-    question = st.text_input("Ask a question", value=EXAMPLES[0])
-    cols = st.columns(len(EXAMPLES))
-    for col, ex in zip(cols, EXAMPLES):
-        if col.button(ex[:42] + "...", use_container_width=True):
-            question = ex
+    # Keep the chosen question across reruns, so clicking an example button
+    # then pressing Run does not reset to the default.
+    if "question" not in st.session_state:
+        st.session_state.question = ANSWERABLE[0]
+
+    tab_ok, tab_missing = st.tabs(
+        ["Evidence in corpus", "Evidence MISSING from corpus"]
+    )
+    with tab_ok:
+        st.caption("Supporting articles are indexed. Claims should verify as "
+                   "ENTAILED.")
+        for ex in ANSWERABLE:
+            if st.button(ex, key=f"ok_{ex[:24]}", use_container_width=True):
+                st.session_state.question = ex
+    with tab_missing:
+        st.caption(
+            "Real HotpotQA questions whose supporting Wikipedia articles were "
+            "never indexed. Retrieval still returns passages - similarity "
+            "search always returns something - so the system should either "
+            "refuse, or produce claims the verifier marks UNSUPPORTED. "
+            "**This is the demo moment.**"
+        )
+        demo_qs = load_demo_questions(cfg)
+        if not demo_qs:
+            st.info("Run `python -m src.data.build_demo_questions` to populate "
+                    "these.")
+        for d in demo_qs[:6]:
+            if st.button(d["question"], key=f"miss_{d['question'][:24]}",
+                         use_container_width=True):
+                st.session_state.question = d["question"]
+            st.caption(f"gold answer: *{d['answer']}* - missing articles: "
+                       f"{', '.join(d['gold_titles'])}")
+
+    question = st.text_input("Question", value=st.session_state.question)
 
     if not st.button("Run pipeline", type="primary"):
         st.info("Enter a question and press **Run pipeline**.")
