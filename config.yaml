@@ -19,14 +19,18 @@ llm:
       # client works against it - only the base_url and model names change.
       base_url: "https://generativelanguage.googleapis.com/v1beta/openai/"
       api_key_env: "GEMINI_API_KEY"
-      generator_model: "gemini-2.5-flash"
-      helper_model: "gemini-2.5-flash-lite"
+      # Verified available on 2026-10-11. NOTE: gemini-2.5-* returns 404
+      # "no longer available to new users", so do not revert to those.
+      # Both models return 0 reasoning tokens, unlike the local Qwen3 builds
+      # that made local inference unusable.
+      generator_model: "gemini-3.5-flash"
+      helper_model: "gemini-3.5-flash-lite"
       # Free tier costs nothing, so USD figures are 0 and the honest cost
       # metric becomes tokens and call counts - which the report already
       # treats as primary for exactly this reason.
       pricing:
-        "gemini-2.5-flash":      {input: 0.0, output: 0.0}
-        "gemini-2.5-flash-lite": {input: 0.0, output: 0.0}
+        "gemini-3.5-flash":      {input: 0.0, output: 0.0}
+        "gemini-3.5-flash-lite": {input: 0.0, output: 0.0}
 
     openrouter:
       base_url: "https://openrouter.ai/api/v1"
@@ -43,7 +47,7 @@ llm:
   max_retries: 5
   # Client-side throttle, set to the tightest free-tier limit of the active
   # provider. Gemini free tier allows ~10-15 requests/minute.
-  requests_per_minute: 10
+  requests_per_minute: 18
   # Abort the whole run after this many consecutive failed questions. Without
   # it, a quota problem silently produces empty results that LOOK like data.
   abort_after_consecutive_errors: 5
