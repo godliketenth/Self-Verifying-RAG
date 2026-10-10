@@ -6,12 +6,24 @@ An ATOMIC claim:
 - is SELF-CONTAINED: replace every pronoun with the actual name
 - preserves the answer's meaning; it must not add or strengthen anything
 
+The question is given ONLY so you can make a terse answer self-contained.
+If the answer is "Diamond White." and the question asks who voiced Frankie
+Greene, the claim is "Diamond White voiced Frankie Greene."
+
+CRITICAL: never import a fact from the question that the answer did not
+assert. If the question says "the 8-year-old star" but the answer only names a
+person, do NOT claim that person is 8 years old - the answer never said so,
+and verifying it would test the question rather than the answer.
+
 For each claim, also write the search query you would use to find evidence for
 it. The query is read by a search engine that has not seen the answer.
 
 Do NOT produce claims for: opinions, hedges, or a refusal such as
 "The retrieved passages do not contain enough information...".
 Produce at most {max_claims} claims.
+
+Question (for reference resolution only):
+{question}
 
 Answer to decompose:
 {answer}
@@ -20,4 +32,5 @@ Reply with ONLY this JSON:
 {{"claims": [{{"claim": "...", "query": "...", "source_sentence": "..."}}]}}
 
 source_sentence must be copied EXACTLY, character for character, from the
-answer above - it is used to locate the claim in the original text.
+ANSWER above (not the question) - it is used to locate the claim in the
+original text.

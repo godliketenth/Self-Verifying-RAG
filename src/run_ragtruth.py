@@ -71,7 +71,8 @@ def main() -> None:
         response = row["response"]
 
         # 1. decompose the response into claims
-        claims = decompose_answer(response, client, cfg)
+        claims = decompose_answer(response, client, cfg,
+                                  question=row["question"])
         if not claims:
             continue
 

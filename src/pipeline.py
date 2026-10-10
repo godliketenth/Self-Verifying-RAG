@@ -134,7 +134,8 @@ def run(
         shadow = not arm.verify
 
         # Stage 7
-        claims = decompose_answer(draft, client, cfg, is_shadow=shadow)
+        claims = decompose_answer(draft, client, cfg, is_shadow=shadow,
+                                  question=question)
 
         if claims:
             # Stage 8 - fresh evidence per claim (local, free)

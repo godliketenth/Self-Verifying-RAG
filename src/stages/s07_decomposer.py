@@ -78,9 +78,24 @@ def decompose_answer(
     client: LLMClient,
     cfg: Config,
     is_shadow: bool = False,
+    question: str = "",
 ) -> list[Claim]:
     """
     Split the draft answer into verifiable claims.
+
+    The QUESTION is passed in only so a terse answer can be made
+    self-contained. HotpotQA rewards short answers, so a draft is often a bare
+    name like "Diamond White." - which asserts no proposition on its own and
+    decomposes to nothing, leaving faithfulness undefined for that question.
+    With the question available, it becomes "Diamond White voiced Frankie
+    Greene", which can be verified.
+
+    THIS DOES NOT WEAKEN THE ASYMMETRY RULE. That rule constrains Stage 9, the
+    verifier, which must never see generator-side context. The decomposer is
+    generator-side itself - it is reading the generator's output by
+    definition. The prompt forbids importing facts from the question that the
+    answer did not assert, because verifying those would test the question
+    rather than the answer.
 
     `is_shadow=True` marks this as a measurement-only call (arms A and B),
     so its cost is excluded from that arm's reported total.
@@ -95,7 +110,8 @@ def decompose_answer(
         return []
 
     prompt = load_prompt(STAGE).format(
-        answer=answer, max_claims=cfg.pipeline.max_claims
+        answer=answer, max_claims=cfg.pipeline.max_claims,
+        question=question or "(not provided)",
     )
     data, _ = client.complete_json(prompt, stage=STAGE,
                                    model=cfg.llm.helper_model,
