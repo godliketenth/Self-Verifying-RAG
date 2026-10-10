@@ -25,7 +25,7 @@ from datetime import datetime
 from pathlib import Path
 
 from src.config import ARMS, Config, get_arm, load_config
-from src.llm import LLMClient
+from src.llm import InsufficientCredits, LLMClient
 from src.metrics import aggregate, judge_answer
 from src.pipeline import run
 from src.retrieval.hybrid import HybridRetriever
@@ -76,6 +76,8 @@ def run_arm(
     results: list[PipelineResult] = []
     judged: list[bool] = []
     t_start = time.perf_counter()
+    consecutive_errors = 0
+    aborted = False
 
     with open(log_path, "w") as logf:
         for i, q in enumerate(questions, start=1):
@@ -84,6 +86,12 @@ def run_arm(
                     question=q["question"], arm=arm, client=client,
                     retriever=retriever, cfg=cfg, gold_answer=q["answer"],
                 )
+            except InsufficientCredits as e:
+                # No point continuing: every remaining question fails the same
+                # way. Stop now with an actionable message.
+                print(f"\n  ABORTED at question {i}: {e}")
+                aborted = True
+                break
             except Exception as e:                   # noqa: BLE001
                 # One bad question must not destroy a run that costs money.
                 # We record the failure and carry on; n_errors is reported.
@@ -92,9 +100,30 @@ def run_arm(
                     gold_answer=q["answer"], error=f"{type(e).__name__}: {e}",
                 )
                 client.take_logs()                   # discard partial logs
-                print(f"  [{i}/{len(questions)}] ERROR: {e}")
+                consecutive_errors += 1
+                print(f"  [{i}/{len(questions)}] ERROR: {str(e)[:160]}")
+
+                # Circuit breaker. A run that keeps failing is not producing
+                # data, it is producing an empty results table that LOOKS like
+                # data. Stop and say why.
+                limit = cfg.llm.abort_after_consecutive_errors
+                if consecutive_errors >= limit:
+                    print(f"\n  ABORTED: {limit} questions failed in a row.")
+                    print("  This is an infrastructure problem (credits, rate "
+                          "limit, or network), not a result.")
+                    print(f"  Last error: {str(e)[:300]}")
+                    results.append(result)
+                    judged.append(False)
+                    logf.write(json.dumps({**result.to_dict(),
+                                           "qid": q["qid"],
+                                           "judge_correct": False}) + "\n")
+                    aborted = True
+                    break
 
             # LLM-as-judge correctness (tagged shadow inside judge_answer)
+            if not result.error:
+                consecutive_errors = 0      # a success resets the breaker
+
             is_correct = False
             if judge and not result.error:
                 is_correct = judge_answer(q["question"], result.final_answer,
@@ -118,13 +147,18 @@ def run_arm(
     elapsed = time.perf_counter() - t_start
     summary = aggregate(results, judged=judged)
     summary["arm"] = arm.name
+    summary["aborted"] = aborted
     summary["arm_description"] = arm.description
     summary["wall_clock_s"] = elapsed
     summary["llm_client"] = client.summary()
 
     (out_dir / "summary.json").write_text(json.dumps(summary, indent=2))
 
-    print(f"\n  ARM {arm.name} done in {elapsed:.0f}s")
+    if aborted:
+        print(f"\n  ARM {arm.name} ABORTED after {elapsed:.0f}s "
+              f"({len(results)} of {len(questions)} questions attempted)")
+    else:
+        print(f"\n  ARM {arm.name} done in {elapsed:.0f}s")
     print(f"    exact match      : {summary['exact_match']:.3f}")
     print(f"    token F1         : {summary['token_f1']:.3f}")
     if "judge_correct" in summary:
@@ -141,6 +175,9 @@ def run_arm(
         print(f"    ERRORS           : {summary['n_errors']}")
     if client.n_parse_failures:
         print(f"    JSON parse fails : {client.n_parse_failures}")
+    if client.throttle_wait_s > 1:
+        print(f"    throttle wait    : {client.throttle_wait_s:.0f}s "
+              f"(rate limit {cfg.llm.requests_per_minute}/min)")
 
     return summary
 
@@ -212,6 +249,10 @@ def main() -> None:
             mock=args.mock, use_cache=not args.no_cache,
             judge=not args.no_judge, out_root=out_root,
         )
+        if summaries[a].get("aborted"):
+            print(f"\nStopping: arm {a} aborted, so the remaining arms would "
+                  "not be comparable against it.")
+            break
 
     # ---- side-by-side comparison ----------------------------------------
     if len(summaries) > 1:

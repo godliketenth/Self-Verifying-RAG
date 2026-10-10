@@ -17,7 +17,15 @@ llm:
   temperature: 0.0            # deterministic: same prompt -> same answer
   max_tokens: 1024
   timeout_s: 120
-  max_retries: 3
+  max_retries: 5
+  # Client-side throttle. OpenRouter caps NEW accounts at 20 requests/minute
+  # per model; the pipeline fires 6-9 calls per question, so without this the
+  # run dies on 429s within seconds. 18 leaves headroom under the cap.
+  requests_per_minute: 18
+  # Abort the whole run after this many consecutive failed questions. Without
+  # it, a billing or rate-limit problem silently produces 100 empty results
+  # and a meaningless results table.
+  abort_after_consecutive_errors: 5
   # USD per 1 million tokens, used by src/llm.py to total up cost.
   pricing:
     "anthropic/claude-sonnet-5":  {input: 2.0, output: 10.0}

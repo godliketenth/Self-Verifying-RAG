@@ -86,6 +86,8 @@ class LLMConfig:
     max_tokens: int
     timeout_s: int
     max_retries: int
+    requests_per_minute: int
+    abort_after_consecutive_errors: int
     pricing: dict[str, dict[str, float]]
     api_key: str = ""
 

@@ -20,6 +20,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -122,6 +123,77 @@ class MockBackend:
 
 
 # ---------------------------------------------------------------------------
+# Rate limiting
+# ---------------------------------------------------------------------------
+
+class RateLimiter:
+    """
+    A simple sliding-window throttle: at most `rpm` requests in any 60s window.
+
+    This exists because OpenRouter caps new accounts at 20 requests per minute
+    per model, and this pipeline makes 6-9 calls per question back to back.
+    Without a client-side throttle the run dies on HTTP 429 within seconds -
+    which is exactly what happened on the first live attempt.
+
+    Throttling here rather than relying on retries is deliberate: retrying
+    after a 429 wastes a round trip and the provider may count the rejected
+    request anyway. Pacing the requests avoids the error in the first place.
+    """
+
+    def __init__(self, rpm: int) -> None:
+        self.rpm = max(1, rpm)
+        self._times: list[float] = []
+        self._lock = threading.Lock()
+
+    def acquire(self) -> float:
+        """Block until a request slot is free. Returns seconds waited."""
+        waited = 0.0
+        while True:
+            with self._lock:
+                now = time.monotonic()
+                # drop timestamps older than the window
+                self._times = [t for t in self._times if now - t < 60.0]
+                if len(self._times) < self.rpm:
+                    self._times.append(now)
+                    return waited
+                sleep_for = 60.0 - (now - self._times[0]) + 0.05
+            time.sleep(max(0.05, sleep_for))
+            waited += max(0.05, sleep_for)
+
+
+class InsufficientCredits(RuntimeError):
+    """Raised on HTTP 402 so the run can stop immediately rather than burn
+    through every remaining question producing identical failures."""
+
+
+def _retry_after_seconds(err: Exception, default: float) -> float:
+    """
+    Honour a Retry-After header when the provider sends one.
+
+    Guessing a backoff when the server has told us exactly how long to wait
+    is how you get stuck in a retry loop that never succeeds.
+    """
+    for attr in ("response", "http_response"):
+        resp = getattr(err, attr, None)
+        headers = getattr(resp, "headers", None)
+        if not headers:
+            continue
+        for key in ("retry-after", "Retry-After", "x-ratelimit-reset"):
+            val = headers.get(key) if hasattr(headers, "get") else None
+            if not val:
+                continue
+            try:
+                v = float(val)
+            except (TypeError, ValueError):
+                continue
+            # Some providers send an epoch-millis reset rather than a delay.
+            if v > 1e11:
+                v = max(0.0, v / 1000.0 - time.time())
+            return min(max(v, 1.0), 90.0)
+    return default
+
+
+# ---------------------------------------------------------------------------
 # The client
 # ---------------------------------------------------------------------------
 
@@ -151,6 +223,8 @@ class LLMClient:
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.logs: list[StageLog] = []
         self._mock_backend = MockBackend()
+        self._limiter = RateLimiter(cfg.llm.requests_per_minute)
+        self.throttle_wait_s = 0.0      # total time spent pacing requests
 
         # Counters for the run summary.
         self.n_calls = 0
@@ -261,6 +335,9 @@ class LLMClient:
 
         last_err: Exception | None = None
         for attempt in range(self.cfg.llm.max_retries):
+            # Pace requests BEFORE sending, to avoid the 429 rather than
+            # retry through it.
+            self.throttle_wait_s += self._limiter.acquire()
             t0 = time.perf_counter()
             try:
                 assert self._client is not None
@@ -291,10 +368,29 @@ class LLMClient:
                 # Deliberately broad: OpenRouter surfaces rate limits, upstream
                 # provider errors and transport failures as different classes,
                 # and for a 3-day project "retry with backoff, then report
-                # honestly" is the right behaviour for all of them.
+                # honestly" is the right behaviour for most of them.
                 last_err = e
+                status = getattr(e, "status_code", None)
+                text = str(e)
+
+                # 402 = out of credits. Retrying cannot help, and continuing
+                # would burn the whole question set producing identical
+                # failures, so fail loudly and immediately.
+                if status == 402 or "402" in text[:80]:
+                    raise InsufficientCredits(
+                        "OpenRouter rejected the request: no credits "
+                        "available.\n"
+                        "Add credits at https://openrouter.ai/settings/credits "
+                        "(about $5 covers a full 100-question run)."
+                    ) from e
+
                 if attempt < self.cfg.llm.max_retries - 1:
-                    time.sleep(2 ** attempt)      # 1s, 2s, 4s
+                    # Honour Retry-After on a 429; otherwise exponential backoff.
+                    if status == 429 or "429" in text[:80]:
+                        delay = _retry_after_seconds(e, default=20.0)
+                    else:
+                        delay = 2 ** attempt      # 1s, 2s, 4s, 8s
+                    time.sleep(delay)
 
         raise RuntimeError(
             f"LLM call failed at stage {stage!r} after "
