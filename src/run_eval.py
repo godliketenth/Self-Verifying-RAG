@@ -213,9 +213,11 @@ def main() -> None:
                     help="override the config seed for question sampling")
     ap.add_argument("--tag", default="",
                     help="suffix for the run directory name")
+    ap.add_argument("--provider", default=None,
+                    help="override config.yaml: gemini | openrouter")
     args = ap.parse_args()
 
-    cfg = load_config(require_api_key=not args.mock)
+    cfg = load_config(require_api_key=not args.mock, provider=args.provider)
     seed = args.seed if args.seed is not None else cfg.seed
 
     arms = ["A", "B", "C"] if args.arm.lower() == "all" else [args.arm.upper()]
@@ -237,8 +239,10 @@ def main() -> None:
     print(f"Arms      : {', '.join(arms)}")
     print(f"Mode      : {'MOCK (free)' if args.mock else 'LIVE'}"
           f"{' , cache OFF' if args.no_cache else ''}")
+    print(f"Provider  : {cfg.llm.provider}")
     print(f"Generator : {cfg.llm.generator_model}")
     print(f"Helper    : {cfg.llm.helper_model}")
+    print(f"Throttle  : {cfg.llm.requests_per_minute} requests/min")
 
     # Loading the retriever (embedding model + FAISS) takes a few seconds, so
     # we do it once and share it across arms.
@@ -247,6 +251,7 @@ def main() -> None:
     (out_root / "config.json").write_text(json.dumps({
         "seed": seed, "n_questions": len(questions), "arms": arms,
         "mock": args.mock, "cache": not args.no_cache,
+        "provider": cfg.llm.provider,
         "generator_model": cfg.llm.generator_model,
         "helper_model": cfg.llm.helper_model,
         "top_k": cfg.retrieval.top_k,

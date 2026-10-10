@@ -297,6 +297,11 @@ def write_tables(summaries: dict[str, dict], out: Path, meta: dict) -> None:
         _row("Tokens / query", summaries, "tokens_per_query", "{:.0f}"),
         _row("USD / query", summaries, "usd_per_query", "${:.5f}"),
         _row("USD / 1000 queries", summaries, "usd_per_query", "${:.2f}", 1000),
+        "",
+        "If the USD rows read $0.00000 the run used a free tier, where price "
+        "per token is zero by definition. The token and call-count rows above "
+        "are the meaningful cost comparison in that case - which is why the "
+        "project treats them as primary throughout.",
         _row("Latency median (s)", summaries, "latency_median_ms", "{:.2f}", 0.001),
         _row("Latency p90 (s)", summaries, "latency_p90_ms", "{:.2f}", 0.001),
         "",

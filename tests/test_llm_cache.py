@@ -50,14 +50,38 @@ def test_cache_key_changes_with_prompt_and_model(cfg):
     assert base == c._cache_key("m1", "sys", "prompt", 0.0, 100)   # stable
 
 
-def test_cost_accounting_matches_pricing(cfg):
-    """1M input tokens of Sonnet must cost exactly its listed input price."""
-    price = cfg.llm.price_of("anthropic/claude-sonnet-5", 1_000_000, 0)
-    assert abs(price - 2.0) < 1e-9
-    price = cfg.llm.price_of("anthropic/claude-haiku-4.5", 0, 1_000_000)
-    assert abs(price - 5.0) < 1e-9
+def test_cost_accounting_matches_pricing():
+    """
+    1M input tokens must cost exactly the listed input price, per provider.
+
+    Loaded per-provider rather than from the default config, so this keeps
+    testing real pricing arithmetic whichever provider is active.
+    """
+    from src.config import load_config
+    orc = load_config(provider="openrouter").llm
+    assert abs(orc.price_of("anthropic/claude-sonnet-5", 1_000_000, 0) - 2.0) < 1e-9
+    assert abs(orc.price_of("anthropic/claude-haiku-4.5", 0, 1_000_000) - 5.0) < 1e-9
     # An unknown model must cost 0, never a guessed number.
-    assert cfg.llm.price_of("some/unknown-model", 1000, 1000) == 0.0
+    assert orc.price_of("some/unknown-model", 1000, 1000) == 0.0
+
+    # A free tier is genuinely zero - not "unknown". Token counts, not
+    # dollars, are what make the arms comparable there.
+    gem = load_config(provider="gemini").llm
+    assert gem.price_of(gem.generator_model, 1_000_000, 1_000_000) == 0.0
+
+
+def test_provider_switching_changes_endpoint_and_models():
+    """--provider must swap the whole recipe, not just the model name."""
+    from src.config import load_config
+    g = load_config(provider="gemini").llm
+    o = load_config(provider="openrouter").llm
+    assert g.base_url != o.base_url
+    assert g.generator_model != o.generator_model
+    assert g.api_key_env == "GEMINI_API_KEY"
+    assert o.api_key_env == "OPENROUTER_API_KEY"
+    import pytest as _pytest
+    with _pytest.raises(RuntimeError, match="Unknown provider"):
+        load_config(provider="not-a-provider")
 
 
 def test_shadow_calls_excluded_from_arm_cost(cfg):

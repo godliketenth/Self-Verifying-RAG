@@ -5,31 +5,48 @@
 
 seed: 42                      # fixed everywhere, so every run is reproducible
 
-# --- LLM settings (routed through OpenRouter) -------------------------------
+# --- LLM settings ---------------------------------------------------------
+# The project supports several providers. Switch with `provider:` below, or
+# at the command line with `--provider gemini`. Each entry is a complete
+# recipe: endpoint, which env var holds the key, which models to use, and
+# what they cost. Nothing else in the code knows which provider is active.
 llm:
-  base_url: "https://openrouter.ai/api/v1"
-  # The GENERATOR is deliberately the same model in all three ablation arms.
-  # If it changed between arms we would be measuring the model, not the pipeline.
-  generator_model: "anthropic/claude-sonnet-5"
-  # Every other stage uses the cheaper model. This does NOT weaken the
-  # ablation, because only the generator has to be held constant.
-  helper_model: "anthropic/claude-haiku-4.5"
+  provider: "gemini"          # gemini | openrouter
+
+  providers:
+    gemini:
+      # Google ships an OpenAI-COMPATIBLE endpoint, so the same `openai`
+      # client works against it - only the base_url and model names change.
+      base_url: "https://generativelanguage.googleapis.com/v1beta/openai/"
+      api_key_env: "GEMINI_API_KEY"
+      generator_model: "gemini-2.5-flash"
+      helper_model: "gemini-2.5-flash-lite"
+      # Free tier costs nothing, so USD figures are 0 and the honest cost
+      # metric becomes tokens and call counts - which the report already
+      # treats as primary for exactly this reason.
+      pricing:
+        "gemini-2.5-flash":      {input: 0.0, output: 0.0}
+        "gemini-2.5-flash-lite": {input: 0.0, output: 0.0}
+
+    openrouter:
+      base_url: "https://openrouter.ai/api/v1"
+      api_key_env: "OPENROUTER_API_KEY"
+      generator_model: "anthropic/claude-sonnet-5"
+      helper_model: "anthropic/claude-haiku-4.5"
+      pricing:
+        "anthropic/claude-sonnet-5":  {input: 2.0, output: 10.0}
+        "anthropic/claude-haiku-4.5": {input: 1.0, output: 5.0}
+
   temperature: 0.0            # deterministic: same prompt -> same answer
   max_tokens: 1024
   timeout_s: 120
   max_retries: 5
-  # Client-side throttle. OpenRouter caps NEW accounts at 20 requests/minute
-  # per model; the pipeline fires 6-9 calls per question, so without this the
-  # run dies on 429s within seconds. 18 leaves headroom under the cap.
-  requests_per_minute: 18
+  # Client-side throttle, set to the tightest free-tier limit of the active
+  # provider. Gemini free tier allows ~10-15 requests/minute.
+  requests_per_minute: 10
   # Abort the whole run after this many consecutive failed questions. Without
-  # it, a billing or rate-limit problem silently produces 100 empty results
-  # and a meaningless results table.
+  # it, a quota problem silently produces empty results that LOOK like data.
   abort_after_consecutive_errors: 5
-  # USD per 1 million tokens, used by src/llm.py to total up cost.
-  pricing:
-    "anthropic/claude-sonnet-5":  {input: 2.0, output: 10.0}
-    "anthropic/claude-haiku-4.5": {input: 1.0, output: 5.0}
 
 # --- Retrieval -------------------------------------------------------------
 retrieval:

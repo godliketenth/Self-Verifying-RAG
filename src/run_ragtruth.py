@@ -45,9 +45,11 @@ def main() -> None:
     ap.add_argument("--n", type=int, default=0, help="0 = all 50")
     ap.add_argument("--mock", action="store_true")
     ap.add_argument("--no-cache", action="store_true")
+    ap.add_argument("--provider", default=None,
+                    help="override config.yaml: gemini | openrouter")
     args = ap.parse_args()
 
-    cfg = load_config(require_api_key=not args.mock)
+    cfg = load_config(require_api_key=not args.mock, provider=args.provider)
     path = cfg.data_dir / "ragtruth_qa.json"
     if not path.exists():
         raise SystemExit("Run `python -m src.data.build_ragtruth` first.")

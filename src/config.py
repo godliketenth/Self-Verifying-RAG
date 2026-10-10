@@ -79,7 +79,18 @@ ARMS: dict[str, Arm] = {
 
 @dataclass
 class LLMConfig:
+    """
+    Settings for the ACTIVE provider only.
+
+    The provider is chosen in config.yaml (or with --provider), and this
+    object is flattened from that provider's entry. The rest of the code
+    never branches on which provider is in use - it just reads base_url,
+    the two model names, and the pricing table. Adding a provider is a
+    config change, not a code change.
+    """
+    provider: str
     base_url: str
+    api_key_env: str
     generator_model: str
     helper_model: str
     temperature: float
@@ -92,7 +103,13 @@ class LLMConfig:
     api_key: str = ""
 
     def price_of(self, model: str, tokens_in: int, tokens_out: int) -> float:
-        """USD cost of one call. Unknown models cost 0 and are not guessed at."""
+        """
+        USD cost of one call. Unknown models cost 0 and are not guessed at.
+
+        On a free tier every price is 0, which is WHY the report treats token
+        counts and call counts as the primary cost metric and dollars as
+        secondary - the token figures stay meaningful whatever the billing.
+        """
         p = self.pricing.get(model)
         if not p:
             return 0.0
@@ -159,9 +176,20 @@ class Config:
     def cache_dir(self) -> Path: return self.path("cache_dir")
 
 
-def load_config(path: str | Path | None = None, require_api_key: bool = False) -> Config:
+KEY_HELP = {
+    "GEMINI_API_KEY": "Create a free key at https://aistudio.google.com/apikey",
+    "OPENROUTER_API_KEY": "Create a key at https://openrouter.ai/keys "
+                          "(needs purchased credits)",
+}
+
+
+def load_config(path: str | Path | None = None, require_api_key: bool = False,
+                provider: str | None = None) -> Config:
     """
     Read config.yaml (and .env for the API key) into a Config object.
+
+    `provider` overrides the one named in config.yaml, so `--provider
+    openrouter` can switch endpoints without editing a file.
 
     require_api_key is False by default so that data building, index building
     and the mock-LLM tests all work with no key present at all.
@@ -170,18 +198,33 @@ def load_config(path: str | Path | None = None, require_api_key: bool = False) -
     with open(cfg_path) as f:
         raw: dict[str, Any] = yaml.safe_load(f)
 
-    load_dotenv(ROOT / ".env")
-    api_key = os.getenv("OPENROUTER_API_KEY", "")
-    if require_api_key and not api_key:
+    llm_raw = dict(raw["llm"])
+    providers = llm_raw.pop("providers")
+    name = provider or llm_raw.pop("provider")
+    llm_raw.pop("provider", None)
+    if name not in providers:
         raise RuntimeError(
-            "OPENROUTER_API_KEY is not set.\n"
-            "Fix: cp .env.example .env, then paste your key from "
-            "https://openrouter.ai/keys into it."
+            f"Unknown provider {name!r}. "
+            f"config.yaml defines: {sorted(providers)}"
+        )
+
+    # Flatten the chosen provider's settings up into LLMConfig, so nothing
+    # downstream has to know a provider was selected.
+    llm_raw.update(providers[name])
+    llm_raw["provider"] = name
+
+    load_dotenv(ROOT / ".env")
+    api_key = os.getenv(llm_raw["api_key_env"], "")
+    if require_api_key and not api_key:
+        hint = KEY_HELP.get(llm_raw["api_key_env"], "")
+        raise RuntimeError(
+            f"{llm_raw['api_key_env']} is not set (provider: {name}).\n"
+            f"Fix: add it to .env. {hint}"
         )
 
     cfg = Config(
         seed=raw["seed"],
-        llm=LLMConfig(**raw["llm"], api_key=api_key),
+        llm=LLMConfig(**llm_raw, api_key=api_key),
         retrieval=RetrievalConfig(**raw["retrieval"]),
         data=DataConfig(**raw["data"]),
         pipeline=PipelineConfig(**raw["pipeline"]),
