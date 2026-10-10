@@ -11,7 +11,7 @@ seed: 42                      # fixed everywhere, so every run is reproducible
 # recipe: endpoint, which env var holds the key, which models to use, and
 # what they cost. Nothing else in the code knows which provider is active.
 llm:
-  provider: "gemini"          # gemini | openrouter
+  provider: "ollama"          # ollama | gemini | openrouter
 
   providers:
     gemini:
@@ -31,6 +31,25 @@ llm:
       pricing:
         "gemini-3.5-flash":      {input: 0.0, output: 0.0}
         "gemini-3.5-flash-lite": {input: 0.0, output: 0.0}
+
+    ollama:
+      # Local inference. No quota, no cost, no network - the only free path
+      # that can actually run ~1,150 calls for a 50-question ablation.
+      #
+      # MODEL CHOICE MATTERS HERE. Qwen3 and Gemma 4 are REASONING models:
+      # they emit thousands of characters of thinking before answering, which
+      # measured at ~83s per call and sometimes consumed the entire token
+      # budget without producing any answer at all. Neither think:false nor
+      # /no_think disables it. qwen2.5-instruct is a plain instruction-tuned
+      # model with no reasoning phase, which is what this pipeline needs.
+      base_url: "http://127.0.0.1:11434/v1"
+      api_key_env: "OLLAMA_API_KEY"     # unused locally; any value works
+      generator_model: "qwen2.5:7b-instruct"
+      helper_model: "qwen2.5:7b-instruct"
+      # Local inference is free, so USD is 0 and tokens are the real metric.
+      pricing:
+        "qwen2.5:7b-instruct":  {input: 0.0, output: 0.0}
+        "qwen2.5:14b-instruct": {input: 0.0, output: 0.0}
 
     openrouter:
       base_url: "https://openrouter.ai/api/v1"

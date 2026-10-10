@@ -147,8 +147,24 @@ def verify_claim(
     pid = data.get("evidence_pid")
     pid = str(pid).strip() if pid else ""
 
+    # Models copy the pid back in whatever form they saw it, including the
+    # square brackets the prompt renders ("[p00042]" or even "[p1]"). Strip
+    # non-pid characters before matching, or evidence linking silently fails
+    # and every claim loses its citation in the UI.
+    pid = pid.strip().strip("[]").strip()
+
     ev_list: list[Evidence] = []
     match = next((p for p in evidence if p.pid == pid), None)
+    if match is None and pid:
+        # Tolerate a shortened or zero-stripped pid ("p1" for "p00001").
+        digits = "".join(ch for ch in pid if ch.isdigit())
+        if digits:
+            match = next(
+                (p for p in evidence
+                 if "".join(ch for ch in p.pid if ch.isdigit()).lstrip("0")
+                 == digits.lstrip("0")),
+                None,
+            )
     if match is None and span:
         # The model named no pid (or a wrong one) but quoted a span; find the
         # passage that actually contains the quote.

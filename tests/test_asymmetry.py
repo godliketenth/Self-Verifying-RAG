@@ -208,3 +208,28 @@ def test_question_leak_still_caught_with_claim_removal():
               "Evidence:\n[p1] Silphium\nA genus of plants.")
     with pytest.raises(AsymmetryViolation):
         assert_asymmetry(prompt, [QUESTION], claim_text=claim)
+
+
+def test_evidence_pid_matching_tolerates_bracketed_and_short_ids(cfg):
+    """
+    Models echo the pid in whatever form the prompt showed it - '[p00001]',
+    '[p1]', 'p1'. If matching were exact-only, evidence linking would fail
+    silently and every claim would lose its citation in the UI.
+    """
+    from src.types import LLMResponse
+
+    for returned in ("[p00001]", "p00001", "[p1]", "p1"):
+        class Fixed(LLMClient):
+            def complete_json(self, prompt, stage, **kw):
+                return ({"verdict": "ENTAILED", "evidence_pid": returned,
+                         "evidence_span": "Scott Derrickson is American.",
+                         "reasoning": "ok"},
+                        LLMResponse("", "mock", 0, 0, 0.0, 0.0, False))
+
+        ev = [Passage(pid="p00001", title="Scott Derrickson",
+                      text="Scott Derrickson is American.")]
+        verdict, evidence, _ = verify_claim("Scott Derrickson is American.",
+                                            ev, Fixed(cfg, mock=True), cfg)
+        assert verdict is Verdict.ENTAILED
+        assert evidence, f"evidence lost when model returned pid {returned!r}"
+        assert evidence[0].pid == "p00001"

@@ -215,6 +215,13 @@ def load_config(path: str | Path | None = None, require_api_key: bool = False,
 
     load_dotenv(ROOT / ".env")
     api_key = os.getenv(llm_raw["api_key_env"], "")
+
+    # Local inference needs no credentials, and has no rate limit to respect.
+    # Throttling it would only slow the run down for no reason.
+    if llm_raw["base_url"].startswith(("http://127.0.0.1", "http://localhost")):
+        api_key = api_key or "ollama-local"
+        llm_raw["requests_per_minute"] = 10_000
+        llm_raw["timeout_s"] = max(llm_raw["timeout_s"], 600)
     if require_api_key and not api_key:
         hint = KEY_HELP.get(llm_raw["api_key_env"], "")
         raise RuntimeError(
