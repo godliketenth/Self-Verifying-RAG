@@ -17,7 +17,7 @@ OFF in arm A, ON in arms B and C.
 from __future__ import annotations
 
 from src.config import Config
-from src.llm import LLMClient
+from src.llm import LLMClient, as_object
 from src.stages.base import format_passages, load_prompt
 from src.types import Passage
 
@@ -44,8 +44,9 @@ def evaluate_relevance(
         passages=format_passages(passages),
         threshold=cfg.pipeline.relevance_threshold,
     )
-    data, _ = client.complete_json(prompt, stage=STAGE,
-                                   model=cfg.llm.helper_model)
+    raw, _ = client.complete_json(prompt, stage=STAGE,
+                                  model=cfg.llm.helper_model)
+    data = as_object(raw, "passages")
 
     scores: dict[str, float] = {}
     for item in data.get("passages", []):

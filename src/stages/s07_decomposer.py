@@ -25,7 +25,7 @@ from __future__ import annotations
 import re
 
 from src.config import Config
-from src.llm import LLMClient
+from src.llm import LLMClient, as_object
 from src.stages.base import load_prompt
 from src.stages.s06_generator import REFUSAL
 from src.types import Claim
@@ -113,9 +113,10 @@ def decompose_answer(
         answer=answer, max_claims=cfg.pipeline.max_claims,
         question=question or "(not provided)",
     )
-    data, _ = client.complete_json(prompt, stage=STAGE,
-                                   model=cfg.llm.helper_model,
-                                   is_shadow=is_shadow)
+    raw, _ = client.complete_json(prompt, stage=STAGE,
+                                  model=cfg.llm.helper_model,
+                                  is_shadow=is_shadow)
+    data = as_object(raw, "claims")
 
     claims: list[Claim] = []
     for item in data.get("claims", []):

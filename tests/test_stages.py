@@ -205,3 +205,59 @@ def test_badges_appear_in_the_formatted_output():
               Claim("Bad.", "q", Verdict.CONTRADICTED)]
     out = format_verified_answer("draft", claims)
     assert "[OK]" in out and "[CONTRADICTED]" in out
+
+
+# --- regression: failures found in a live local-model run, 2026-10-11 -------
+
+def test_unescaped_quotes_in_evidence_span_are_repaired():
+    """
+    REGRESSION. A 7B model copies evidence verbatim into a JSON field without
+    escaping it, producing structurally complete but invalid JSON:
+
+        {"evidence_span": "...the term "Oldies But Goodies"."}
+
+    This killed 4 of 36 questions in a live run. Prompting alone does not
+    fix it reliably at this model size, so the parser repairs it.
+    """
+    from src.llm import extract_json
+    bad = ('{"verdict": "ENTAILED", "evidence_pid": "p1", "evidence_span": '
+           '"Art Laboe coined the term "Oldies But Goodies".", '
+           '"reasoning": "stated in evidence"}')
+    d = extract_json(bad)
+    assert d["verdict"] == "ENTAILED"
+    assert "Oldies But Goodies" in d["evidence_span"]
+
+
+def test_bare_list_response_is_coerced_not_crashed():
+    """
+    REGRESSION. The model returned a bare array where the prompt asked for an
+    object wrapping it, and .get() on a list raised AttributeError, killing
+    the question.
+    """
+    from src.llm import as_object
+    assert as_object([{"claim": "x"}], "claims") == {"claims": [{"claim": "x"}]}
+    assert as_object({"claims": []}, "claims") == {"claims": []}
+    assert as_object("nonsense", "claims") == {}
+
+
+def test_decomposer_survives_a_bare_list_reply(cfg):
+    """End to end: the decomposer must not crash on a bare-array reply."""
+    class BareList(LLMClient):
+        def complete_json(self, prompt, stage, **kw):
+            from src.types import LLMResponse
+            return ([{"claim": "A fact.", "query": "q",
+                      "source_sentence": "A fact."}],
+                    LLMResponse("", "mock", 0, 0, 0.0, 0.0, False))
+    claims = decompose_answer("A fact.", BareList(cfg, mock=True), cfg)
+    assert len(claims) == 1
+    assert claims[0].text == "A fact."
+
+
+def test_planner_survives_a_bare_list_reply(cfg):
+    class BareList(LLMClient):
+        def complete_json(self, prompt, stage, **kw):
+            from src.types import LLMResponse
+            return (["sub one", "sub two"],
+                    LLMResponse("", "mock", 0, 0, 0.0, 0.0, False))
+    subs = plan_retrieval("q", Route.MULTI_HOP, BareList(cfg, mock=True), cfg)
+    assert subs == ["sub one", "sub two"]

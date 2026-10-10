@@ -11,7 +11,7 @@ In our ablation this stage is OFF in arm A and ON in arms B and C.
 from __future__ import annotations
 
 from src.config import Config
-from src.llm import LLMClient
+from src.llm import LLMClient, as_object
 from src.stages.base import load_prompt
 from src.types import Route
 
@@ -28,8 +28,9 @@ def route_query(question: str, client: LLMClient, cfg: Config) -> tuple[Route, s
     string so it is visible in the logs.
     """
     prompt = load_prompt(STAGE).format(question=question)
-    data, _ = client.complete_json(prompt, stage=STAGE,
-                                   model=cfg.llm.helper_model)
+    raw, _ = client.complete_json(prompt, stage=STAGE,
+                                  model=cfg.llm.helper_model)
+    data = as_object(raw, "route")
 
     raw = str(data.get("route", "")).strip().upper()
     reason = str(data.get("reason", ""))

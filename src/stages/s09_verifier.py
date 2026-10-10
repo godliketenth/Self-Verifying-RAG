@@ -39,7 +39,7 @@ nothing the verifier legitimately needs.
 from __future__ import annotations
 
 from src.config import Config
-from src.llm import LLMClient
+from src.llm import LLMClient, as_object
 from src.stages.base import format_passages, load_prompt
 from src.types import Claim, Evidence, Passage, Verdict
 
@@ -129,9 +129,10 @@ def verify_claim(
     # Enforce the rule before the prompt can ever reach the API.
     assert_asymmetry(prompt, _forbidden or [], claim_text=claim_text)
 
-    data, _ = client.complete_json(prompt, stage=STAGE,
-                                   model=cfg.llm.helper_model,
-                                   is_shadow=is_shadow)
+    raw, _ = client.complete_json(prompt, stage=STAGE,
+                                  model=cfg.llm.helper_model,
+                                  is_shadow=is_shadow)
+    data = as_object(raw, "verdict")
 
     raw = str(data.get("verdict", "")).strip().upper()
     try:

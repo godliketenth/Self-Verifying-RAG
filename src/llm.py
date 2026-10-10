@@ -37,6 +37,35 @@ from src.types import LLMResponse, StageLog
 
 _FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.DOTALL)
 
+# Matches  "key": "value"  where value runs up to the quote that precedes a
+# comma or closing brace. Non-greedy with a lookahead, so an unescaped quote
+# INSIDE the value does not end the match early.
+_PAIR_RE = re.compile(r'"(\w+)"\s*:\s*"(.*?)"\s*(?=,\s*"|\s*[}\]])', re.DOTALL)
+
+
+def _repair_unescaped_quotes(text: str) -> str:
+    """
+    Re-escape stray double quotes inside JSON string values.
+
+    Small local models copy evidence verbatim into a JSON field without
+    escaping it, producing output that is structurally complete but invalid:
+
+        {"evidence_span": "...coining the term "Oldies But Goodies"."}
+
+    Rather than demand better behaviour from a 7B model through prompting -
+    which does not reliably work - we repair the common case: find each
+    "key": "value" pair and escape any bare quotes within the value.
+    """
+    def fix(m: re.Match) -> str:
+        key, val = m.group(1), m.group(2)
+        val = val.replace("\\", "\\\\")
+        # Escape quotes that are not already escaped.
+        val = re.sub(r'(?<!\\)"', r'\\"', val)
+        val = val.replace("\n", "\\n").replace("\r", " ").replace("\t", " ")
+        return f'"{key}": "{val}"'
+
+    return _PAIR_RE.sub(fix, text)
+
 
 def extract_json(text: str) -> Any:
     """
@@ -44,8 +73,15 @@ def extract_json(text: str) -> Any:
 
     Models wrap JSON in markdown fences, add a sentence of preamble, or both,
     even when told not to. Rather than fight that with ever-stricter prompts,
-    we parse tolerantly: try the whole string, then any fenced block, then the
-    outermost {...} or [...] we can find.
+    we parse tolerantly, in increasing order of desperation:
+
+      1. the whole string
+      2. any fenced ```json block
+      3. the outermost {...} or [...]
+      4. the same, after repairing unescaped quotes inside string values
+
+    Step 4 exists because a 7B local model fails this way several times per
+    hundred calls, and each failure would otherwise kill a question.
 
     Raises ValueError if nothing parses - callers retry, and a persistent
     failure is recorded as a metric rather than hidden.
@@ -67,7 +103,30 @@ def extract_json(text: str) -> Any:
         except json.JSONDecodeError:
             continue
 
+    # Last resort: repair unescaped quotes, then retry every candidate.
+    for cand in candidates:
+        try:
+            return json.loads(_repair_unescaped_quotes(cand))
+        except json.JSONDecodeError:
+            continue
+
     raise ValueError(f"No parseable JSON in response: {text[:300]!r}")
+
+
+def as_object(data: Any, list_key: str) -> dict[str, Any]:
+    """
+    Coerce a parsed JSON value into the object shape a stage expects.
+
+    Models sometimes return a bare array where the prompt asked for an object
+    wrapping that array - `[{...}, {...}]` instead of `{"claims": [...]}`.
+    Calling .get() on that list raised AttributeError and killed the question,
+    so normalise instead: a list becomes {list_key: list}.
+    """
+    if isinstance(data, dict):
+        return data
+    if isinstance(data, list):
+        return {list_key: data}
+    return {}
 
 
 # ---------------------------------------------------------------------------
