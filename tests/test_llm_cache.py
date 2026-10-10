@@ -1,0 +1,95 @@
+"""
+Milestone 0 test: the LLM cache and the accounting are trustworthy.
+
+Why this test matters: every later milestone depends on being able to re-run
+an experiment cheaply. If caching silently failed, a 100-question re-run would
+cost real money each time, and the project's cost figures would be wrong.
+"""
+
+from src.llm import LLMClient, extract_json
+from src.types import StageLog
+
+
+def test_mock_mode_needs_no_api_key(cfg):
+    """The whole pipeline must be runnable with zero credentials."""
+    cfg.llm.api_key = ""
+    client = LLMClient(cfg, mock=True)
+    resp = client.complete("anything", stage="s06_generator")
+    assert resp.text
+    assert resp.cost_usd == 0.0
+
+
+def test_cache_hit_on_identical_call(cfg):
+    """
+    A repeated identical call must be served from disk: same text, flagged as
+    a hit, and costing nothing.
+    """
+    client = LLMClient(cfg, mock=True)
+    client.mock = False                       # exercise the cache path...
+    client._client = None                     # ...without a real network client
+
+    key = client._cache_key("m", "", "p", 0.0, 10)
+    client._cache_write(key, {"text": "cached reply", "model": "m",
+                              "tokens_in": 11, "tokens_out": 7})
+
+    resp = client.complete("p", stage="s02_router", model="m", max_tokens=10)
+    assert resp.cache_hit is True
+    assert resp.text == "cached reply"
+    assert resp.cost_usd == 0.0               # no money spent on a hit
+    assert resp.tokens_in == 11               # but tokens still reported
+    assert client.n_cache_hits == 1
+
+
+def test_cache_key_changes_with_prompt_and_model(cfg):
+    """Editing a prompt must invalidate only that stage's cache."""
+    c = LLMClient(cfg, mock=True)
+    base = c._cache_key("m1", "sys", "prompt", 0.0, 100)
+    assert base != c._cache_key("m1", "sys", "prompt CHANGED", 0.0, 100)
+    assert base != c._cache_key("m2", "sys", "prompt", 0.0, 100)
+    assert base != c._cache_key("m1", "sys", "prompt", 0.7, 100)
+    assert base == c._cache_key("m1", "sys", "prompt", 0.0, 100)   # stable
+
+
+def test_cost_accounting_matches_pricing(cfg):
+    """1M input tokens of Sonnet must cost exactly its listed input price."""
+    price = cfg.llm.price_of("anthropic/claude-sonnet-5", 1_000_000, 0)
+    assert abs(price - 2.0) < 1e-9
+    price = cfg.llm.price_of("anthropic/claude-haiku-4.5", 0, 1_000_000)
+    assert abs(price - 5.0) < 1e-9
+    # An unknown model must cost 0, never a guessed number.
+    assert cfg.llm.price_of("some/unknown-model", 1000, 1000) == 0.0
+
+
+def test_shadow_calls_excluded_from_arm_cost(cfg):
+    """
+    The heart of the faithfulness design: measurement calls must not be
+    counted as the arm's own cost.
+    """
+    from src.types import PipelineResult
+    r = PipelineResult(question="q", arm="A")
+    r.stage_logs = [
+        StageLog(stage="s06_generator", cost_usd=0.003, tokens_in=100, tokens_out=50),
+        StageLog(stage="s09_verifier", cost_usd=0.002, tokens_in=80, tokens_out=20,
+                 is_shadow=True),
+    ]
+    assert abs(r.total_cost_usd() - 0.003) < 1e-9              # shadow excluded
+    assert abs(r.total_cost_usd(include_shadow=True) - 0.005) < 1e-9
+    assert r.n_llm_calls() == 1
+    assert r.n_llm_calls(include_shadow=True) == 2
+
+
+def test_complete_json_parses_mock_replies(cfg):
+    """Every mock stage reply must be valid JSON where the stage expects it."""
+    client = LLMClient(cfg, mock=True)
+    for stage in ("s02_router", "s03_planner", "s07_decomposer", "s09_verifier"):
+        data, _ = client.complete_json("p [p00001]", stage=stage)
+        assert isinstance(data, dict)
+
+
+def test_take_logs_resets_between_queries(cfg):
+    """Logs are per-query; a leak would corrupt per-query cost figures."""
+    client = LLMClient(cfg, mock=True)
+    client.complete("a", stage="s06_generator")
+    client.complete("b", stage="s06_generator")
+    assert len(client.take_logs()) == 2
+    assert client.take_logs() == []

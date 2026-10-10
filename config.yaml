@@ -1,0 +1,63 @@
+# ============================================================================
+# Self-Verifying Agentic RAG - single source of truth for every setting.
+# Nothing in src/ hardcodes a value that belongs here. Change it here, rerun.
+# ============================================================================
+
+seed: 42                      # fixed everywhere, so every run is reproducible
+
+# --- LLM settings (routed through OpenRouter) -------------------------------
+llm:
+  base_url: "https://openrouter.ai/api/v1"
+  # The GENERATOR is deliberately the same model in all three ablation arms.
+  # If it changed between arms we would be measuring the model, not the pipeline.
+  generator_model: "anthropic/claude-sonnet-5"
+  # Every other stage uses the cheaper model. This does NOT weaken the
+  # ablation, because only the generator has to be held constant.
+  helper_model: "anthropic/claude-haiku-4.5"
+  temperature: 0.0            # deterministic: same prompt -> same answer
+  max_tokens: 1024
+  timeout_s: 120
+  max_retries: 3
+  # USD per 1 million tokens, used by src/llm.py to total up cost.
+  pricing:
+    "anthropic/claude-sonnet-5":  {input: 2.0, output: 10.0}
+    "anthropic/claude-haiku-4.5": {input: 1.0, output: 5.0}
+
+# --- Retrieval -------------------------------------------------------------
+retrieval:
+  embedding_model: "BAAI/bge-small-en-v1.5"
+  embedding_dim: 384
+  # bge models are trained with this instruction prefix on QUERIES only.
+  query_prefix: "Represent this sentence for searching relevant passages: "
+  top_k: 5                    # passages handed to the generator
+  claim_top_k: 3              # passages retrieved per claim during verification
+  candidates_per_retriever: 20  # how deep dense/BM25 go before fusion
+  rrf_k: 60                   # Reciprocal Rank Fusion constant (standard value)
+
+# --- Data construction -----------------------------------------------------
+data:
+  hotpot_dataset: "hotpotqa/hotpot_qa"
+  hotpot_config: "distractor"
+  hotpot_split: "validation"
+  n_eval_questions: 100       # questions actually evaluated
+  n_corpus_questions: 1000    # questions whose paragraphs form the search index
+  ragtruth_dataset: "wandb/RAGTruth-processed"
+  n_ragtruth: 50              # labelled responses for verifier precision/recall
+  span_overlap_threshold: 0.5 # gold span must sit >=50% inside a claim sentence
+
+# --- Pipeline behaviour ----------------------------------------------------
+pipeline:
+  max_subqueries: 3           # retrieval planner hop cap (scope limit: 2-3 hops)
+  max_claims: 8               # cap per answer, keeps cost bounded
+  claim_dedup_threshold: 0.95 # cosine similarity above which claims are dupes
+  relevance_threshold: 0.5    # below this a passage is dropped (CRAG-style)
+  min_relevant_passages: 2    # fewer than this triggers one retrieval re-plan
+  max_replan_rounds: 1
+  max_correction_rounds: 1
+
+# --- Paths -----------------------------------------------------------------
+paths:
+  data_dir: "data"
+  index_dir: "data/index"
+  runs_dir: "runs"
+  cache_dir: ".cache/llm"
