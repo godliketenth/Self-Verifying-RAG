@@ -124,10 +124,23 @@ def run_arm(
             if not result.error:
                 consecutive_errors = 0      # a success resets the breaker
 
+            # The judge must sit inside the same credit guard as the pipeline
+            # call: it is an LLM call too, and an uncaught InsufficientCredits
+            # here crashes the run with a traceback instead of aborting it
+            # cleanly, losing the summary for questions that already succeeded.
             is_correct = False
             if judge and not result.error:
-                is_correct = judge_answer(q["question"], result.final_answer,
-                                          q["answer"], client, cfg)
+                try:
+                    is_correct = judge_answer(q["question"], result.final_answer,
+                                              q["answer"], client, cfg)
+                except InsufficientCredits as e:
+                    print(f"\n  ABORTED at question {i} (judge): {e}")
+                    results.append(result)
+                    judged.append(False)
+                    logf.write(json.dumps({**result.to_dict(), "qid": q["qid"],
+                                           "judge_correct": False}) + "\n")
+                    aborted = True
+                    break
                 result.stage_logs.extend(client.take_logs())
             judged.append(is_correct)
 
