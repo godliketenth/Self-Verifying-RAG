@@ -1,0 +1,15 @@
+Decide whether the predicted answer means the same thing as the gold answer.
+
+Be strict about FACTS but lenient about PHRASING:
+- gold "yes" vs predicted "Yes, both were American" -> correct
+- gold "1994" vs predicted "It was released in 1994" -> correct
+- gold "Christopher Nolan" vs predicted "Jonathan Nolan" -> NOT correct
+- a predicted answer that refuses or says it lacks information is NOT correct,
+  unless the gold answer also expresses that.
+
+Question: {question}
+Gold answer: {gold}
+Predicted answer: {predicted}
+
+Reply with ONLY this JSON:
+{{"correct": true or false, "reasoning": "one short sentence"}}

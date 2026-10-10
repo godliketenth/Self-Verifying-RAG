@@ -1,0 +1,21 @@
+Break a question into the minimal set of self-contained search queries needed
+to answer it.
+
+Rules:
+- At most {max_subqueries} queries. Fewer is better.
+- Each query must be SELF-CONTAINED: no pronouns, no "it", no "that film".
+  A query is read by a search engine that has not seen the question.
+- Name the specific entity and the attribute wanted.
+- Do NOT invent entities that are not in the question.
+- If the question asks one simple thing, return it as a single query.
+
+Example:
+Q: Who directed the film that won Best Picture in 1994?
+{{"subqueries": ["film that won Best Picture 1994", "director of Forrest Gump"]}}
+(The second query names a guess from the first hop; if unsure, write
+"director of the Best Picture winner 1994" instead of inventing a title.)
+
+Question: {question}
+
+Reply with ONLY this JSON:
+{{"subqueries": ["...", "..."]}}

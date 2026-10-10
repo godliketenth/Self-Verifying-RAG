@@ -1,0 +1,17 @@
+Judge how much each passage helps answer the question. (CRAG, Yan et al. 2024)
+
+Score each passage from 0.0 to 1.0:
+  1.0  contains a fact directly needed to answer the question
+  0.5  same topic, useful background, but does not contain the answer
+  0.0  unrelated, or shares only surface words with the question
+
+Be strict. A passage about a different person with a similar name scores 0.0.
+
+Question: {question}
+
+Passages:
+{passages}
+
+Reply with ONLY this JSON, including EVERY passage exactly once:
+{{"passages": [{{"pid": "pXXXXX", "score": 0.0, "keep": true}}]}}
+Set keep=true when score >= {threshold}, otherwise keep=false.

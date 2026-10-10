@@ -1,0 +1,10 @@
+Answer the question directly from your own knowledge. No passages were
+retrieved, because the question was judged not to need them.
+
+Rules:
+- Be concise: one to three sentences.
+- If you are not confident, say so rather than guessing.
+
+Question: {question}
+
+Answer:

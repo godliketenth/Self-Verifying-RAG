@@ -42,7 +42,13 @@ data:
   n_eval_questions: 100       # questions actually evaluated
   n_corpus_questions: 1000    # questions whose paragraphs form the search index
   ragtruth_dataset: "wandb/RAGTruth-processed"
-  n_ragtruth: 50              # labelled responses for verifier precision/recall
+  # Only 18% of RAGTruth's QA rows contain any hallucination span, so a random
+  # sample would give too few positives to measure precision/recall on. We
+  # therefore sample a deliberately ENRICHED set: equal numbers of
+  # hallucinated and clean responses. Reported precision is conditional on
+  # this base rate, which ANALYSIS.md states explicitly.
+  n_ragtruth_hallucinated: 25
+  n_ragtruth_clean: 25
   span_overlap_threshold: 0.5 # gold span must sit >=50% inside a claim sentence
 
 # --- Pipeline behaviour ----------------------------------------------------

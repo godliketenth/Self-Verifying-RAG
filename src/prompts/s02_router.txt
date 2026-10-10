@@ -1,0 +1,19 @@
+You classify how much retrieval a question needs. (Adaptive-RAG, Jeong et al. 2024)
+
+NO_RETRIEVAL  - answerable from general knowledge with no lookup: arithmetic,
+                definitions of common words, universally known facts.
+SINGLE_HOP    - needs ONE fact about ONE entity looked up.
+MULTI_HOP     - needs facts about TWO OR MORE entities, OR a fact that can only
+                be found after first finding another fact (a "bridge"), OR a
+                comparison between two entities.
+
+Examples:
+Q: What is 17 times 4?                                        -> NO_RETRIEVAL
+Q: What year was the Eiffel Tower completed?                  -> SINGLE_HOP
+Q: Were Scott Derrickson and Ed Wood of the same nationality? -> MULTI_HOP
+Q: Who directed the film that won Best Picture in 1994?       -> MULTI_HOP
+
+Question: {question}
+
+Reply with ONLY this JSON:
+{{"route": "NO_RETRIEVAL" or "SINGLE_HOP" or "MULTI_HOP", "reason": "one short sentence"}}

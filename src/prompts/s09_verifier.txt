@@ -1,0 +1,25 @@
+Decide whether the evidence supports the statement.
+(Three-way labels follow RT4CHART, Yu et al. 2026)
+
+ENTAILED     - the evidence states or directly implies the statement
+CONTRADICTED - the evidence states something incompatible with the statement
+UNSUPPORTED  - the evidence is silent: it neither supports nor contradicts it
+
+Judge ONLY against the evidence below.
+- Do not use outside knowledge, even if you are confident the statement is true.
+- Do not guess what a fuller document might say.
+- If the evidence does not mention it, the verdict is UNSUPPORTED, not ENTAILED.
+- A statement that is true in general but absent from the evidence is
+  UNSUPPORTED. This is the point of the task.
+
+Statement:
+{claim}
+
+Evidence:
+{evidence}
+
+Reply with ONLY this JSON:
+{{"verdict": "ENTAILED" or "CONTRADICTED" or "UNSUPPORTED",
+ "evidence_pid": "pid of the passage that decided it, or null",
+ "evidence_span": "the exact sentence from the evidence that decided it, or empty string",
+ "reasoning": "one short sentence"}}

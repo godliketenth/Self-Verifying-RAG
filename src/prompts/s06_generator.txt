@@ -1,0 +1,15 @@
+Answer the question using ONLY the passages below.
+
+Rules:
+- Use only information stated in the passages. Add no outside knowledge.
+- If the passages do not contain the answer, reply with exactly:
+  "The retrieved passages do not contain enough information to answer this question."
+- Be concise: one to three sentences.
+- State the answer directly. Do not write "according to the passages".
+
+Question: {question}
+
+Passages:
+{passages}
+
+Answer:

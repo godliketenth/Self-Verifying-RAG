@@ -1,0 +1,20 @@
+A statement failed verification. Rewrite it so that the evidence supports it,
+or drop it.
+
+Rules:
+- If the evidence supports a corrected version, write that corrected version.
+- If the evidence contradicts the statement, write the correct fact instead.
+- If the evidence does not cover the statement at all, set dropped=true.
+- Never invent a fact that is not in the evidence. Dropping is better than
+  guessing.
+
+Failed statement: {claim}
+Verdict that failed: {verdict}
+
+Evidence:
+{evidence}
+
+Reply with ONLY this JSON:
+{{"claim": "corrected statement, or empty string if dropped",
+ "dropped": true or false,
+ "reasoning": "one short sentence"}}

@@ -116,7 +116,8 @@ class DataConfig:
     n_eval_questions: int
     n_corpus_questions: int
     ragtruth_dataset: str
-    n_ragtruth: int
+    n_ragtruth_hallucinated: int
+    n_ragtruth_clean: int
     span_overlap_threshold: float
 
 

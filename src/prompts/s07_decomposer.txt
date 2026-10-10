@@ -1,0 +1,23 @@
+Split an answer into atomic factual claims, and write a search query for each.
+(FActScore, Min et al. 2023; joint claim+query generation, JointCQ, Xu et al. 2025)
+
+An ATOMIC claim:
+- asserts exactly ONE fact (split "X is American and was born in 1946" into two)
+- is SELF-CONTAINED: replace every pronoun with the actual name
+- preserves the answer's meaning; it must not add or strengthen anything
+
+For each claim, also write the search query you would use to find evidence for
+it. The query is read by a search engine that has not seen the answer.
+
+Do NOT produce claims for: opinions, hedges, or a refusal such as
+"The retrieved passages do not contain enough information...".
+Produce at most {max_claims} claims.
+
+Answer to decompose:
+{answer}
+
+Reply with ONLY this JSON:
+{{"claims": [{{"claim": "...", "query": "...", "source_sentence": "..."}}]}}
+
+source_sentence must be copied EXACTLY, character for character, from the
+answer above - it is used to locate the claim in the original text.
