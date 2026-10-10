@@ -50,23 +50,47 @@ class AsymmetryViolation(RuntimeError):
     """Raised when generator-side information leaks into a verifier prompt."""
 
 
-def assert_asymmetry(prompt: str, forbidden: list[str]) -> None:
+def assert_asymmetry(prompt: str, forbidden: list[str],
+                     claim_text: str = "") -> None:
     """
-    Runtime guard: none of `forbidden` may appear in the verifier's prompt.
+    Runtime guard: none of `forbidden` may appear in the verifier's prompt,
+    OUTSIDE the claim itself.
 
-    `forbidden` is the draft answer and the question. We compare on
-    normalised whitespace and ignore very short strings, because a 3-word
-    fragment can coincide innocently with the claim itself.
+    The "outside the claim" part is essential and was learned the hard way.
+    The claim is EXTRACTED from the draft answer, so when the draft is a
+    single sentence the claim is nearly identical to it:
+
+        draft: "Family Matters was a spin-off of Perfect Strangers."
+        claim: "Family Matters was a spin-off of Perfect Strangers."
+
+    A naive check for "does the draft appear in the prompt?" fires on that,
+    even though nothing leaked - the claim is the one piece of generator-side
+    text the verifier is SUPPOSED to see. So we remove the claim from the
+    prompt first, then look for the forbidden text in what remains.
+
+    This keeps the guard's real purpose intact: if anything passed the draft
+    or the question into the prompt IN ADDITION to the claim, that extra copy
+    survives the removal and is still caught.
+
+    We compare on normalised whitespace and ignore strings under 25
+    characters, because a short fragment can coincide innocently.
     """
     haystack = " ".join(prompt.lower().split())
+
+    # Remove the claim (one occurrence) - it is legitimately present.
+    claim_norm = " ".join((claim_text or "").lower().split())
+    if claim_norm:
+        haystack = haystack.replace(claim_norm, " ", 1)
+
     for text in forbidden:
         needle = " ".join((text or "").lower().split())
         if len(needle) < 25:        # too short to be a meaningful leak
             continue
         if needle in haystack:
             raise AsymmetryViolation(
-                "Verifier prompt contains generator-side text, which breaks "
-                "the information asymmetry this project depends on.\n"
+                "Verifier prompt contains generator-side text OUTSIDE the "
+                "claim, which breaks the information asymmetry this project "
+                "depends on.\n"
                 f"Leaked text: {text[:120]!r}"
             )
 
@@ -103,7 +127,7 @@ def verify_claim(
     )
 
     # Enforce the rule before the prompt can ever reach the API.
-    assert_asymmetry(prompt, _forbidden or [])
+    assert_asymmetry(prompt, _forbidden or [], claim_text=claim_text)
 
     data, _ = client.complete_json(prompt, stage=STAGE,
                                    model=cfg.llm.helper_model,

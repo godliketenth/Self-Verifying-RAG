@@ -168,3 +168,43 @@ def test_unparseable_verdict_defaults_to_unsupported_not_entailed(cfg):
     evidence = [Passage(pid="p1", title="t", text="some evidence text")]
     verdict, _, _ = verify_claim("A claim.", evidence, client, cfg)
     assert verdict is Verdict.UNSUPPORTED
+
+
+# --- regression: found by a live run, 2026-10-11 ---------------------------
+
+def test_single_sentence_draft_does_not_false_positive():
+    """
+    REGRESSION. When the draft is one sentence, the claim extracted from it is
+    nearly identical to the draft. The claim is the one piece of
+    generator-side text the verifier is SUPPOSED to see, so this must not
+    raise - the original guard did, and it killed real questions mid-run.
+    """
+    draft = "Family Matters was a spin-off of Perfect Strangers."
+    claim = "Family Matters was a spin-off of Perfect Strangers."
+    prompt = (f"Statement:\n{claim}\n\nEvidence:\n[p1] Family Matters\n"
+              "Family Matters is an American sitcom.")
+    assert_asymmetry(prompt, [draft, "some question text here that is long"],
+                     claim_text=claim)      # must not raise
+
+
+def test_leak_still_caught_when_draft_appears_beyond_the_claim():
+    """
+    The other half of the regression: removing the claim must not create a
+    hole. A draft passed in ADDITION to the claim is still a real leak.
+    """
+    draft = ("Family Matters was a spin-off of Perfect Strangers, and it ran "
+             "for nine seasons on ABC before moving to CBS.")
+    claim = "Family Matters was a spin-off of Perfect Strangers."
+    prompt = (f"Statement:\n{claim}\n\nFor context the model wrote: {draft}\n\n"
+              "Evidence:\n[p1] Family Matters\nAn American sitcom.")
+    with pytest.raises(AsymmetryViolation):
+        assert_asymmetry(prompt, [draft], claim_text=claim)
+
+
+def test_question_leak_still_caught_with_claim_removal():
+    """A leaked question must still be caught after the claim is removed."""
+    claim = "Silphium is a genus of flowering plants."
+    prompt = (f"Statement:\n{claim}\n\nThe user asked: {QUESTION}\n\n"
+              "Evidence:\n[p1] Silphium\nA genus of plants.")
+    with pytest.raises(AsymmetryViolation):
+        assert_asymmetry(prompt, [QUESTION], claim_text=claim)
