@@ -104,7 +104,12 @@ pipeline:
   max_subqueries: 3           # retrieval planner hop cap (scope limit: 2-3 hops)
   max_claims: 8               # cap per answer, keeps cost bounded
   claim_dedup_threshold: 0.95 # cosine similarity above which claims are dupes
-  relevance_threshold: 0.5    # below this a passage is dropped (CRAG-style)
+  # Dropped from 0.5 to 0.4 alongside the rubric fix. Measured on the first
+  # 50-question run: the evaluator separates gold from distractor passages
+  # cleanly (mean score 0.50 vs 0.03), but a 0.5 cutoff sat exactly on the
+  # median gold score and discarded 35% of gold evidence. A margin below the
+  # gold band is what makes the filter safe.
+  relevance_threshold: 0.4
   min_relevant_passages: 2    # fewer than this triggers one retrieval re-plan
   max_replan_rounds: 1
   max_correction_rounds: 1

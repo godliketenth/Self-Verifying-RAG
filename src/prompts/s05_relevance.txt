@@ -1,11 +1,22 @@
 Judge how much each passage helps answer the question. (CRAG, Yan et al. 2024)
 
+IMPORTANT: many questions are MULTI-HOP - answering them needs facts from two
+or more different passages. A passage that supplies only ONE of the needed
+facts is still fully relevant. Do not penalise a passage for being incomplete
+on its own.
+
 Score each passage from 0.0 to 1.0:
-  1.0  contains a fact directly needed to answer the question
-  0.5  same topic, useful background, but does not contain the answer
+  1.0  supplies a fact needed for ANY PART of the answer, including one hop
+       of a multi-hop question, or identifies an entity the question names
+  0.5  about a named entity in the question, but supplies no needed fact
   0.0  unrelated, or shares only surface words with the question
 
-Be strict. A passage about a different person with a similar name scores 0.0.
+Example: for "Were Scott Derrickson and Ed Wood of the same nationality?", a
+passage giving ONLY Scott Derrickson's nationality scores 1.0 - it answers one
+hop. It is not 0.5 just because it says nothing about Ed Wood.
+
+Be strict only about genuine irrelevance: a passage about a different person
+with a similar name scores 0.0.
 
 Question: {question}
 
