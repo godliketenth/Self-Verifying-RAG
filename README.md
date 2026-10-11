@@ -53,7 +53,11 @@ measures the pipeline and not the model.
 |---|---|---|---|---|---|
 | **A** | Baseline RAG - retrieve once, generate once | - | - | - | - |
 | **B** | Agentic only - planning and corrective retrieval | yes | yes | yes | - |
-| **C** | Full system - agentic + claim verification loop | yes | yes | yes | **yes** |
+| **C** | Full system, deletes claims that fail | yes | yes | yes | **yes** |
+| **D** | Full system, **warn-only**: keeps and badges failed claims | yes | yes | yes | **yes** |
+
+Arms C and D differ in exactly one flag, `drop_failed`. **Arm D is the
+recommended configuration** - see `ANALYSIS.md` section 10.
 
 The arms are **flag sets over one implementation** (`src/config.py` -> `ARMS`),
 not three separate code paths. If arm C had its own code, any difference could
@@ -160,9 +164,10 @@ cached to disk, so a re-run after a bug fix costs nothing.
 | Layer | Choice | Why |
 |---|---|---|
 | Orchestration | Plain Python, explicit stages | Every control-flow decision is a line you can point at; LangChain's chain abstractions express cyclic corrective loops awkwardly |
-| LLM gateway | OpenRouter via the `openai` SDK | One key for both models; OpenAI-*compatible* endpoint |
-| Generator | `anthropic/claude-sonnet-5` | Fixed across all arms |
-| Helper stages | `anthropic/claude-haiku-4.5` | 5x cheaper; only the generator must be held constant |
+| LLM gateway | Provider map in `config.yaml` | `ollama` / `gemini` / `openrouter`, switched by one flag; nothing downstream knows which is active |
+| Provider | Ollama (local) by default | Free-tier request caps elsewhere (50/day, 20/day) could not cover ~1,150 calls per run |
+| Generator | `qwen2.5:7b-instruct` | Fixed across all arms. Non-reasoning: Qwen3/Gemma4 spend thousands of characters thinking first (~83s/call) |
+| Helper stages | same model | Switchable with one flag: `--provider openrouter` runs the whole stack on Claude Sonnet 5 |
 | Dense retrieval | `BAAI/bge-small-en-v1.5` + FAISS `IndexFlatIP` | Exact search is sub-millisecond at 10k passages |
 | Sparse retrieval | `rank_bm25` | Standard, pure Python, no infrastructure |
 | Fusion | Reciprocal Rank Fusion (k=60) | Score-scale-free, so no per-query normalisation |
