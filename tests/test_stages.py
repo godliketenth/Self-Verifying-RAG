@@ -291,3 +291,27 @@ def test_assemble_keeps_a_warned_claim_in_the_answer():
     assert "Possibly wrong but kept." in out
     rendered = format_verified_answer("draft", [kept])
     assert "[UNSUPPORTED]" in rendered
+
+
+def test_app_imports_when_run_as_a_script_not_a_module():
+    """
+    REGRESSION. `streamlit run src/app.py` executes the file directly, which
+    puts src/ on sys.path instead of the project root, so `import src.config`
+    raised ModuleNotFoundError and the demo showed a traceback instead of the
+    app. (`python -m src.app` worked, which is why it went unnoticed.)
+
+    app.py now inserts the project root on sys.path before any src import.
+    This test runs the file the way Streamlit does and fails if that breaks.
+    """
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent.parent
+    r = subprocess.run(
+        [sys.executable, "-c",
+         "import runpy, sys; sys.argv = ['app.py']; "
+         "runpy.run_path('src/app.py', run_name='__main__')"],
+        capture_output=True, text=True, cwd=root, timeout=180,
+    )
+    assert "ModuleNotFoundError" not in r.stderr, r.stderr[-600:]

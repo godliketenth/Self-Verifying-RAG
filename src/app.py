@@ -16,6 +16,18 @@ unsupported and WHY.
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
+# `streamlit run src/app.py` executes this file directly, which puts src/ on
+# sys.path rather than the project root - so `import src.config` fails with
+# ModuleNotFoundError. (`python -m src.app` works, because -m adds the current
+# directory.) Putting the project root on the path first makes the documented
+# command work from anywhere. This must run BEFORE any src.* import.
+_ROOT = Path(__file__).resolve().parent.parent
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+
 import streamlit as st
 
 from src.config import ARMS, load_config
