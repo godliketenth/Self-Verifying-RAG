@@ -97,9 +97,16 @@ Full discussion in [`ANALYSIS.md`](ANALYSIS.md); numbers in
 
 | | A baseline | B agentic | C full, delete | D full, warn-only |
 |---|---|---|---|---|
+| Exact match (span) | **0.265** | 0.245 | 0.204 | 0.204 |
+| Token F1 (span) | **0.355** | 0.323 | 0.266 | 0.282 |
 | LLM-judge correct | 0.429 | 0.367 | 0.367 | **0.449** |
 | Faithfulness | 0.753 | 0.753 | **0.788** | **0.788** |
 | Tokens / query | **857** | 2,775 | 4,353 | 4,353 |
+
+EM and F1 are scored on the short answer **span**, as HotpotQA intends - its
+gold answers average 2.8 words while this generator writes sentences, so
+sentence-level EM measures formatting rather than correctness (`ANALYSIS.md`
+section 11). Both are reported in the run's tables.
 
 Three findings, all argued in full in `ANALYSIS.md`:
 

@@ -33,12 +33,13 @@ generator be *fixed across arms*, and it is.
 
 ## 2. Headline results
 
-| metric | A baseline | B agentic | C full |
-|---|---|---|---|
-| Exact match | **0.020** | 0.000 | 0.000 |
-| Token F1 | **0.127** | 0.109 | 0.080 |
-| LLM-judge correct | **0.429** | 0.367 | 0.367 |
-| Faithfulness | 0.753 | 0.753 | **0.788** |
+| metric | A baseline | B agentic | C full, delete | D full, warn |
+|---|---|---|---|---|
+| Exact match (span) | **0.265** | 0.245 | 0.204 | 0.204 |
+| Token F1 (span) | **0.355** | 0.323 | 0.266 | 0.282 |
+| Exact match (sentence) | 0.020 | 0.000 | 0.000 | 0.000 |
+| LLM-judge correct | 0.429 | 0.367 | 0.367 | **0.449** |
+| Faithfulness | 0.753 | 0.753 | **0.788** | **0.788** |
 | Claims flagged | 28.6% | 32.2% | 27.1% |
 | LLM calls / query | 1.0 | 3.7 | 5.9 |
 | Tokens / query | 857 | 2,775 | **4,353** |
@@ -228,7 +229,10 @@ gain at the same token cost, and is what the demo now presents.
 8. **The arm D vs baseline difference is one question** (22 correct against
    21). Only the arm D vs arm C gap, four questions, is worth any weight, and
    neither was significance tested.
-9. **Wikipedia, not a high-stakes domain.** The proposal motivates the work
+9. **EM and F1 are reported at span level** after a re-scoring pass
+   (section 11). The sentence-level figures are reported alongside them and
+   neither was discarded.
+10. **Wikipedia, not a high-stakes domain.** The proposal motivates the work
    with legal, medical and governance text. The mechanism is
    domain-independent, but those domains have longer documents, denser
    cross-references, and a much higher cost for a false ENTAILED. Nothing
@@ -360,3 +364,58 @@ demo now shows: surface a verdict as a warning next to the claim and let a
 reader judge, rather than silently removing content on a signal that is wrong
 three times out of four. That recommendation was already in section 6 on the
 strength of the precision figure; this measures it.
+
+---
+
+## 11. Exact match was measuring formatting, not correctness
+
+The first results reported exact match 0.020, which reads as a system that
+does not work. It is not what it appears to be.
+
+HotpotQA's gold answers are **spans**, averaging 2.8 words - "Perfect
+Strangers", "yes", "1994". This generator is prompted for one to three
+sentences, because the decomposer and verifier need prose to work on, and its
+answers average 16.5 words. The three measurements together make the problem
+obvious:
+
+| arm A, 49 questions | |
+|---|---|
+| Exact match on the sentence | **0.020** |
+| Gold string **present** in the answer | **0.408** |
+| LLM judge says correct | **0.429** |
+
+The system finds the right answer twenty times more often than exact match
+credits it. EM was scoring output format.
+
+`src/rescore_em.py` re-scores the same logged answers against the shortest
+answering span, which is what HotpotQA intends:
+
+| arm | EM sentence | EM span | F1 sentence | F1 span |
+|---|---|---|---|---|
+| A | 0.020 | **0.265** | 0.127 | **0.355** |
+| B | 0.000 | 0.245 | 0.109 | 0.323 |
+| C | 0.000 | 0.204 | 0.080 | 0.266 |
+| D | 0.000 | 0.204 | 0.086 | 0.282 |
+
+**Why this is a measurement fix and not a flattering one.**
+
+- **Nothing was re-run.** Answers, claims, verdicts, costs, latency,
+  faithfulness and the LLM-judge score are untouched. Only EM and F1 are
+  recomputed, from answers already on disk.
+- **The span must appear in the answer.** An extraction the model invents is
+  rejected and the full answer is scored instead, so a failed extraction can
+  never improve a result.
+- **The ordering is unchanged.** A > B > C on span EM exactly as on sentence
+  EM, and the span figures agree with the independent LLM-judge score
+  (0.265 EM / 0.355 F1 against 0.429 judge). If the re-scoring were gaming
+  the metric, it would have disturbed the ranking.
+- **Both numbers are reported.** Sentence-level EM is not deleted. It
+  truthfully measures a real property - this system answers in prose - and
+  the span figures are what make the results comparable with published
+  HotpotQA work.
+- The extraction calls are tagged `is_shadow`, so they measure the arms
+  without being charged to them.
+
+The residual gap between span EM (0.265) and the judge (0.429) is the
+generator still being a 7B model: it finds a defensible answer more often
+than it finds the exact gold string.

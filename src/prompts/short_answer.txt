@@ -1,0 +1,16 @@
+Extract the shortest span from the answer that actually answers the question.
+
+HotpotQA scores answers as SPANS, not sentences: the gold answer for "Which
+canal supplies hydro-power?" is "Dundee Canal", not a full sentence about it.
+
+Rules:
+- Copy the span from the answer text. Do not reword, expand or explain it.
+- Usually a name, a date, a number, a title, or "yes" / "no".
+- For a yes/no question, reply exactly "yes" or "no".
+- If the answer states it has insufficient information, reply exactly: NONE
+
+Question: {question}
+Answer: {answer}
+
+Reply with ONLY this JSON:
+{{"span": "the shortest answering span, or NONE"}}

@@ -102,8 +102,9 @@ def plot_correctness(summaries: dict[str, dict], out: Path) -> None:
     solid; if they diverge, that divergence is itself worth discussing.
     """
     arms = sorted(summaries)
-    metrics = [("exact_match", "Exact match"),
-               ("token_f1", "Token F1"),
+    # Span-level EM/F1 are the comparable figures (see write_tables).
+    metrics = [("exact_match_span", "Exact match\n(span)"),
+               ("token_f1_span", "Token F1\n(span)"),
                ("judge_correct", "LLM judge")]
 
     fig, ax = _new_fig(7.0, 4.2)
@@ -266,8 +267,10 @@ def write_tables(summaries: dict[str, dict], out: Path, meta: dict) -> None:
     for a in arms:
         lines.append(f"| {a} | {summaries[a].get('arm_description', '')} |")
     lines += ["", "## Quality", "", head, sep,
-              _row("Exact match", summaries, "exact_match", "{:.3f}"),
-              _row("Token F1", summaries, "token_f1", "{:.3f}"),
+              _row("Exact match (span)", summaries, "exact_match_span", "{:.3f}"),
+              _row("Token F1 (span)", summaries, "token_f1_span", "{:.3f}"),
+              _row("Exact match (sentence)", summaries, "exact_match", "{:.3f}"),
+              _row("Token F1 (sentence)", summaries, "token_f1", "{:.3f}"),
               _row("LLM-judge correct", summaries, "judge_correct", "{:.3f}"),
               _row("Faithfulness", summaries, "faithfulness", "{:.3f}"),
               "", "## Claim-level behaviour", "", head, sep,
