@@ -1,17 +1,22 @@
 """
-Streamlit demo - the live "catches an unsupported claim" moment.
+Streamlit demo for Self-Verifying Agentic RAG.
 
     streamlit run src/app.py
 
-Shows, for one question:
-  - the agent's retrieval decisions (route, sub-queries, what it kept/dropped)
-  - the draft answer
-  - every claim with its verdict badge and the evidence span behind it
-  - what the correction loop changed
+Three views, in the order a viva needs them:
 
-The point of the UI is the thing the proposal argued for: a user should not
-get one confidence score for a paragraph, they should see WHICH sentence is
-unsupported and WHY.
+  Verify   - one question, one configuration, every claim audited
+  Compare  - the SAME question through two configurations, side by side.
+             This is the project's actual contribution made visible: the
+             ablation is the result, and a demo that runs one arm at a time
+             cannot show it.
+  Results  - the measured numbers, so the findings live in the demo rather
+             than only in the report.
+
+DESIGN NOTE. The verdict colour on each claim is a left rule, not a card.
+That rule encodes the verdict - it is information, not decoration - and the
+claim text stays the largest thing on screen, because the claim under audit
+is what the audience is here to look at.
 """
 
 from __future__ import annotations
@@ -28,287 +33,317 @@ _ROOT = Path(__file__).resolve().parent.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
+import json
+import time
+
 import streamlit as st
 
 from src.config import ARMS, load_config
 from src.llm import LLMClient
 from src.pipeline import run
 from src.retrieval.hybrid import HybridRetriever
-from src.types import Verdict
+from src.types import PipelineResult, Verdict
 
 st.set_page_config(page_title="Self-Verifying Agentic RAG",
-                   page_icon="*", layout="wide")
+                   page_icon="◆", layout="wide")
 
-BADGE = {
-    Verdict.ENTAILED:     ("ENTAILED",     "#0ca30c"),
-    Verdict.UNSUPPORTED:  ("UNSUPPORTED",  "#fab219"),
-    Verdict.CONTRADICTED: ("CONTRADICTED", "#d03b3b"),
+# Verdict colours are the reserved status palette used throughout the report,
+# so a verdict here and a verdict in a chart mean the same thing.
+VERDICT = {
+    Verdict.ENTAILED:     ("Entailed", "#0ca30c",
+                           "the evidence supports this"),
+    Verdict.UNSUPPORTED:  ("Unsupported", "#b07d00",
+                           "the evidence is silent on this"),
+    Verdict.CONTRADICTED: ("Contradicted", "#d03b3b",
+                           "the evidence disagrees with this"),
 }
 
-# Two kinds of demo question, and the contrast between them IS the demo.
-#
-# ANSWERABLE: the supporting Wikipedia articles are in the indexed corpus, so
-# retrieval finds real evidence and claims should come back ENTAILED.
-#
-# EVIDENCE MISSING: real HotpotQA questions whose supporting articles were
-# never indexed (we index 1,000 questions' paragraphs out of 7,405). Nothing
-# in the corpus can support an answer. Retrieval still returns SOMETHING -
-# similarity search always does - so this is precisely the failure mode the
-# project exists to catch: a fluent answer built on loosely-related passages,
-# revealed only by checking each claim against evidence.
-#
-# These are honest demonstrations, not staged failures: the questions are
-# genuine and the system is behaving correctly by flagging them.
-ANSWERABLE = [
-    "Were Scott Derrickson and Ed Wood of the same nationality?",
-    "What government position was held by the woman who portrayed "
-    "Corliss Archer in the film Kiss and Tell?",
-    "Which magazine was started first, Arthur's Magazine or First for Women?",
-]
+CSS = """
+<style>
+  /* The claim under audit is the largest thing on screen. */
+  .claim-row { border-left: 3px solid var(--rule); padding: .55rem 0 .55rem .85rem;
+               margin: .1rem 0 .55rem 0; }
+  .claim-text { font-size: 1.03rem; line-height: 1.5; color: #1a1a1a; }
+  .claim-verdict { font-size: .78rem; font-weight: 700; letter-spacing: .01em;
+                   color: var(--rule); }
+  .claim-why { font-size: .78rem; color: #6b6762; margin-left: .5rem;
+               font-weight: 400; letter-spacing: 0; }
+  .claim-was { font-size: .82rem; color: #6b6762; margin-top: .25rem; }
+  .ev { border-left: 2px solid #ddd9d2; padding-left: .8rem; margin:.4rem 0;
+        font-size: .86rem; color: #3b3835; }
+  .ev-src { font-size: .76rem; color: #8a857e; }
+  .answer { font-size: 1.12rem; line-height: 1.6; color: #16150f; }
+  .muted { color: #6b6762; font-size: .85rem; }
+</style>
+"""
 
 
-def load_demo_questions(cfg) -> list[dict]:
-    """Questions whose evidence is deliberately absent from the corpus."""
-    f = cfg.data_dir / "demo_questions.json"
-    if not f.exists():
-        return []
-    import json
-    return json.loads(f.read_text())
-
-
-def load_verified_demos(cfg) -> list[dict]:
-    """
-    Questions that DID flag or correct a claim in the measured evaluation run.
-
-    Mined from the logs rather than hand-picked, so the demo shows behaviour
-    that was actually observed and is reproducible at the same seed.
-    """
-    f = cfg.data_dir / "demo_verified.json"
-    if not f.exists():
-        return []
-    import json
-    return json.loads(f.read_text())
-
-
-# Loading the embedding model and FAISS index takes a few seconds; cache it
-# so only the first question in a session pays that cost.
 @st.cache_resource
-def get_retriever():
+def boot():
     cfg = load_config()
     return HybridRetriever(cfg), cfg
 
 
+def load_json(p: Path):
+    try:
+        return json.loads(p.read_text())
+    except Exception:
+        return None
+
+
+def claim_block(claim, show_evidence: bool = True) -> None:
+    """One audited claim: verdict rule, the claim, then what settled it."""
+    label, colour, why = VERDICT.get(
+        claim.verdict, ("Unverified", "#8a857e", "no verdict recorded"))
+    text = claim.text.strip() or claim.original_text.strip()
+    removed = claim.was_corrected and not claim.text.strip()
+
+    st.markdown(
+        f"<div class='claim-row' style='--rule:{colour}'>"
+        f"<div class='claim-verdict'>{label}"
+        f"<span class='claim-why'>{why}</span></div>"
+        f"<div class='claim-text'>{text}</div>"
+        + (f"<div class='claim-was'>Removed from the answer.</div>"
+           if removed else "")
+        + (f"<div class='claim-was'>Rewritten from: {claim.original_text}</div>"
+           if claim.was_corrected and not removed and claim.original_text
+           else "")
+        + "</div>",
+        unsafe_allow_html=True)
+
+    if not show_evidence:
+        return
+    cited = [e for e in claim.evidence if e.span]
+    looked = [e for e in claim.evidence if not e.span]
+    if cited:
+        for e in cited:
+            st.markdown(
+                f"<div class='ev'>{e.span}"
+                f"<div class='ev-src'>{e.pid} · {e.title}</div></div>",
+                unsafe_allow_html=True)
+    elif looked:
+        titles = ", ".join(f"{e.pid} · {e.title}" for e in looked)
+        st.markdown(
+            f"<div class='ev'><span class='muted'>Searched, and none of these "
+            f"supported the claim:</span><div class='ev-src'>{titles}</div>"
+            f"</div>", unsafe_allow_html=True)
+
+
+def cost_line(r: PipelineResult) -> str:
+    return (f"{r.n_llm_calls(include_shadow=True)} model calls · "
+            f"{r.total_tokens(include_shadow=True):,} tokens · "
+            f"{r.total_latency_ms / 1000:.1f}s")
+
+
+def execute(question: str, arm_key: str, mock: bool, retriever, cfg):
+    client = LLMClient(cfg, mock=mock)
+    t0 = time.perf_counter()
+    result = run(question, ARMS[arm_key], client, retriever, cfg)
+    result.total_latency_ms = (time.perf_counter() - t0) * 1000
+    return result
+
+
+# ---------------------------------------------------------------------------
+
 def main() -> None:
+    st.markdown(CSS, unsafe_allow_html=True)
     st.title("Self-Verifying Agentic RAG")
-    st.caption("Claim-level hallucination detection in an agentic retrieval "
-               "pipeline - Aditya Khairnar (C221)")
+    st.markdown(
+        "<div class='muted'>Every sentence of the answer is checked against "
+        "retrieved evidence before you see it. Aditya Khairnar · C221</div>",
+        unsafe_allow_html=True)
+    st.write("")
 
     try:
-        retriever, cfg = get_retriever()
+        retriever, cfg = boot()
     except SystemExit as e:
-        st.error(f"{e}\n\nRun the data build commands in START_HERE.md first.")
+        st.error(f"{e}\n\nBuild the data first — see START_HERE.md.")
         return
 
-    # ---- controls --------------------------------------------------------
     with st.sidebar:
-        st.header("Settings")
-        arm_name = st.radio(
-            "Ablation arm", ["C", "B", "A"],
-            format_func=lambda a: f"Arm {a} - {ARMS[a].description.split(':')[0]}",
-            help="Arm C is the full system. A and B are the baselines.",
-        )
-        mock = st.checkbox("Mock mode (no API key, free)", value=False)
+        st.subheader("Configuration")
+        arm_key = st.radio(
+            "Pipeline", ["D", "C", "B", "A"], index=0,
+            format_func=lambda a: {
+                "A": "A · Baseline RAG",
+                "B": "B · Agentic retrieval",
+                "C": "C · Verified, removes failures",
+                "D": "D · Verified, flags failures",
+            }[a])
+        st.caption(ARMS[arm_key].description)
+        mock = st.checkbox("Mock mode (no model, instant)", value=False)
         st.divider()
-        arm = ARMS[arm_name]
-        st.markdown("**This arm's stages**")
+        arm = ARMS[arm_key]
+        st.caption("Stages active in this configuration")
         for label, on in [("Complexity router", arm.router),
                           ("Retrieval planner", arm.planner),
-                          ("Relevance evaluator", arm.relevance),
+                          ("Relevance filter", arm.relevance),
                           ("Claim verification", arm.verify),
                           ("Correction loop", arm.correction_rounds > 0)]:
-            st.markdown(f"{'ON ' if on else 'off'} - {label}")
+            st.markdown(f"{'●' if on else '○'} {label}")
         st.divider()
-        st.caption(f"Generator: `{cfg.llm.generator_model}`")
-        st.caption(f"Helper: `{cfg.llm.helper_model}`")
+        st.caption(f"Generator `{cfg.llm.generator_model}` via "
+                   f"`{cfg.llm.provider}`, identical in every configuration")
 
-    # Keep the chosen question across reruns, so clicking an example button
-    # then pressing Run does not reset to the default.
-    if "question" not in st.session_state:
-        st.session_state.question = ANSWERABLE[0]
+    tab_verify, tab_compare, tab_results = st.tabs(
+        ["Verify an answer", "Compare configurations", "Measured results"])
 
-    tab_catch, tab_ok, tab_missing = st.tabs(
-        ["Verification CATCHES a claim", "Clean answer",
-         "Evidence missing from corpus"]
-    )
-    with tab_catch:
-        st.caption(
-            "These questions flagged or corrected at least one claim in the "
-            "measured evaluation run. They are taken from the logs, not "
-            "hand-picked, and reproduce at the same seed. **Run these on arm "
-            "C to see the correction loop fire.**"
-        )
-        for d in load_verified_demos(cfg)[:5]:
-            badge = ("contradiction found" if d["has_contradiction"]
-                     else f"{d['n_flagged']} claim(s) flagged")
-            if st.button(d["question"], key=f"catch_{d['question'][:24]}",
-                         use_container_width=True):
-                st.session_state.question = d["question"]
-            st.caption(f"observed: {badge} - gold answer: *{d['gold_answer']}*")
-    with tab_ok:
-        st.caption("Supporting articles are indexed. Claims should verify as "
-                   "ENTAILED.")
-        for ex in ANSWERABLE:
-            if st.button(ex, key=f"ok_{ex[:24]}", use_container_width=True):
-                st.session_state.question = ex
-    with tab_missing:
-        st.caption(
-            "Real HotpotQA questions whose supporting Wikipedia articles were "
-            "never indexed. Retrieval still returns passages - similarity "
-            "search always returns something - so the system should either "
-            "refuse, or produce claims the verifier marks UNSUPPORTED. "
-            "**This is the demo moment.**"
-        )
-        demo_qs = load_demo_questions(cfg)
-        if not demo_qs:
-            st.info("Run `python -m src.data.build_demo_questions` to populate "
-                    "these.")
-        for d in demo_qs[:6]:
-            if st.button(d["question"], key=f"miss_{d['question'][:24]}",
-                         use_container_width=True):
-                st.session_state.question = d["question"]
-            st.caption(f"gold answer: *{d['answer']}* - missing articles: "
-                       f"{', '.join(d['gold_titles'])}")
+    # ---- VERIFY ----------------------------------------------------------
+    with tab_verify:
+        demos = load_json(cfg.data_dir / "demo_verified.json") or []
+        if "q" not in st.session_state:
+            st.session_state.q = (demos[0]["question"] if demos else
+                                  "Were Scott Derrickson and Ed Wood of the "
+                                  "same nationality?")
 
-    question = st.text_input("Question", value=st.session_state.question)
+        if demos:
+            st.caption("Questions that flagged a claim in the measured run — "
+                       "taken from the logs, so they reproduce")
+            for d in demos[:4]:
+                tag = ("a contradiction" if d["has_contradiction"]
+                       else f"{d['n_flagged']} flagged")
+                if st.button(f"{d['question']}", key=f"d{d['question'][:20]}",
+                             use_container_width=True):
+                    st.session_state.q = d["question"]
+                st.caption(f"found {tag} · expected answer *{d['gold_answer']}*")
 
-    if not st.button("Run pipeline", type="primary"):
-        st.info("Enter a question and press **Run pipeline**.")
-        return
+        question = st.text_input("Question", value=st.session_state.q)
+        if not st.button("Verify", type="primary"):
+            return
 
-    if not mock and not cfg.llm.api_key:
-        st.error("No OPENROUTER_API_KEY found. Add it to .env, or tick "
-                 "**Mock mode** in the sidebar.")
-        return
+        if not mock and cfg.llm.provider != "ollama" and not cfg.llm.api_key:
+            st.error("No API key for this provider. Tick mock mode, or set the "
+                     "key in .env.")
+            return
 
-    # ---- run -------------------------------------------------------------
-    client = LLMClient(cfg, mock=mock)
-    with st.spinner(f"Running arm {arm_name} ..."):
-        result = run(question, arm, client, retriever, cfg)
+        with st.spinner(f"Running configuration {arm_key}…"):
+            r = execute(question, arm_key, mock, retriever, cfg)
 
-    # ---- headline numbers ------------------------------------------------
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("LLM calls", result.n_llm_calls(include_shadow=True))
-    c2.metric("Tokens", f"{result.total_tokens(include_shadow=True):,}")
-    c3.metric("Cost", f"${result.total_cost_usd(include_shadow=True):.4f}")
-    c4.metric("Latency", f"{result.total_latency_ms / 1000:.1f}s")
+        st.markdown(f"<div class='answer'>{r.final_answer or '—'}</div>",
+                    unsafe_allow_html=True)
+        st.caption(cost_line(r))
 
-    # ---- the answer ------------------------------------------------------
-    st.subheader("Answer")
-    st.success(result.final_answer or "(no answer produced)")
+        if r.claims:
+            n_bad = sum(1 for c in r.claims
+                        if c.verdict and c.verdict.is_failure)
+            st.divider()
+            st.subheader(f"{len(r.claims)} claims audited, {n_bad} flagged")
+            if not arm.verify:
+                st.caption("This configuration records verdicts but does not "
+                           "act on them. Switch to C or D to see the "
+                           "correction loop.")
+            for c in r.claims:
+                claim_block(c)
 
-    if result.claims and result.draft_answer != result.final_answer:
-        dropped = [c for c in result.claims
-                   if c.was_corrected and not c.text.strip()]
-        st.markdown("**Draft answer, before verification**")
-        st.info(result.draft_answer)
-        if dropped:
-            # Showing this is the point, not an embarrassment. Measured
-            # verifier precision is 0.247, so some dropped claims were
-            # correct. A viewer must be able to see what verification COST,
-            # not only what it caught - that is the honest comparison, and it
-            # is the evidence behind ANALYSIS.md's recommendation to surface
-            # verdicts as warnings rather than delete content automatically.
-            st.warning(
-                f"Verification removed {len(dropped)} claim(s). On the "
-                "RAGTruth evaluation this verifier had **precision 0.247** - "
-                "roughly three in four flags are false positives - so some "
-                "removed claims were correct. Compare the draft above with "
-                "the verified answer to judge the trade-off."
-            )
+            dropped = [c for c in r.claims
+                       if c.was_corrected and not c.text.strip()]
+            if dropped:
+                st.warning(
+                    f"Verification removed {len(dropped)} claim(s). Measured "
+                    "precision of this verifier is 0.247, so roughly three in "
+                    "four flags are false positives and some removed claims "
+                    "were correct. Configuration D keeps them and flags them "
+                    "instead.")
+                with st.expander("Answer before verification"):
+                    st.write(r.draft_answer)
 
-    # ---- per-claim verdicts: the core of the demo ------------------------
-    if result.claims:
-        n_bad = sum(1 for c in result.claims
-                    if c.verdict and c.verdict.is_failure)
-        st.subheader(f"Claim-level verification "
-                     f"({len(result.claims)} claims, {n_bad} flagged)")
-        if not arm.verify:
-            st.caption("This arm runs verification in SHADOW mode: verdicts "
-                       "are recorded for measurement but the answer is not "
-                       "corrected. Switch to arm C to see the correction loop.")
+        with st.expander("How the answer was built"):
+            c1, c2 = st.columns(2)
+            with c1:
+                st.markdown(f"Route **{r.route.value if r.route else '—'}**")
+                st.markdown(f"Re-planned **{r.replan_rounds}×**, corrected "
+                            f"**{r.correction_rounds}×**")
+                if r.subqueries:
+                    st.caption("Searched for")
+                    for q in r.subqueries:
+                        st.markdown(f"- {q}")
+            with c2:
+                kept = {p.pid for p in r.kept_passages}
+                st.caption(f"{len(r.retrieved)} passages retrieved, "
+                           f"{len(kept)} kept")
+                for p in r.retrieved[:8]:
+                    mark = "kept" if p.pid in kept else "dropped"
+                    st.markdown(f"<span class='muted'>{mark} · {p.pid} · "
+                                f"{p.title}</span>", unsafe_allow_html=True)
 
-        for i, claim in enumerate(result.claims, start=1):
-            label, color = BADGE.get(claim.verdict, ("UNVERIFIED", "#52514e"))
-            shown = claim.text or claim.original_text
-            # Built outside the f-string: Python 3.11 disallows backslash
-            # escapes inside f-string expressions.
-            corrected_tag = ""
-            if claim.was_corrected:
-                corrected_tag = (
-                    "<span style='color:#52514e;font-size:.8rem'>"
-                    " (corrected)</span>"
-                )
-            st.markdown(
-                f"<div style='border-left:4px solid {color};"
-                f"padding:.5rem .8rem;margin:.4rem 0;background:#fafaf9'>"
-                f"<span style='color:{color};font-weight:700;font-size:.8rem'>"
-                f"{label}</span>{corrected_tag}"
-                f"<br><span style='color:#0b0b0b'>{shown}</span></div>",
-                unsafe_allow_html=True,
-            )
-            with st.expander(f"Evidence for claim {i}"):
-                if claim.was_corrected:
-                    st.markdown(f"**Original claim:** {claim.original_text}")
-                st.markdown(f"**Verification query:** `{claim.verification_query}`")
-                if claim.reasoning:
-                    st.markdown(f"**Verifier's reasoning:** {claim.reasoning}")
-                cited = [e for e in claim.evidence if e.span]
-                considered = [e for e in claim.evidence if not e.span]
-                if cited:
-                    for ev in cited:
-                        st.markdown(f"**[{ev.pid}] {ev.title}**")
-                        st.markdown(f"> {ev.span}")
-                        if ev.full_text:
-                            st.caption(ev.full_text[:600])
-                if considered:
-                    st.markdown("**Passages considered** - none of these "
-                                "supported the claim:")
-                    for ev in considered:
-                        st.markdown(f"- **[{ev.pid}] {ev.title}**")
-                        st.caption(ev.full_text[:400])
-                if not claim.evidence:
-                    st.caption("No passages were retrieved for this claim.")
+    # ---- COMPARE ---------------------------------------------------------
+    with tab_compare:
+        st.markdown(
+            "The same question through two configurations. Everything is "
+            "held constant except the stages each one runs, so any difference "
+            "you see is caused by those stages.")
+        c1, c2 = st.columns(2)
+        left = c1.selectbox("Left", ["A", "B", "C", "D"], index=0,
+                            format_func=lambda a: f"{a} · "
+                            f"{ARMS[a].description.split(':')[0]}")
+        right = c2.selectbox("Right", ["A", "B", "C", "D"], index=3,
+                             format_func=lambda a: f"{a} · "
+                             f"{ARMS[a].description.split(':')[0]}")
+        cq = st.text_input("Question to compare",
+                           value=st.session_state.get("q", ""), key="cmpq")
 
-    # ---- the agent's retrieval decisions ---------------------------------
-    st.subheader("Pipeline trace")
-    t1, t2 = st.columns(2)
-    with t1:
-        st.markdown(f"**Route:** `{result.route.value if result.route else '-'}`")
-        st.markdown(f"**Re-plan rounds:** {result.replan_rounds}")
-        st.markdown(f"**Correction rounds:** {result.correction_rounds}")
-        if result.subqueries:
-            st.markdown("**Sub-queries:**")
-            for q in result.subqueries:
-                st.markdown(f"- {q}")
-    with t2:
-        st.markdown(f"**Retrieved:** {len(result.retrieved)} passages, "
-                    f"**kept:** {len(result.kept_passages)}")
-        kept_ids = {p.pid for p in result.kept_passages}
-        for p in result.retrieved[:10]:
-            mark = "KEPT   " if p.pid in kept_ids else "dropped"
-            st.caption(f"{mark} [{p.pid}] {p.title}")
+        if st.button("Run both", type="primary"):
+            cols = st.columns(2)
+            for col, key in ((cols[0], left), (cols[1], right)):
+                with col:
+                    st.markdown(f"**Configuration {key}**")
+                    with st.spinner(f"Running {key}…"):
+                        r = execute(cq, key, mock, retriever, cfg)
+                    st.markdown(f"<div class='answer'>{r.final_answer or '—'}"
+                                f"</div>", unsafe_allow_html=True)
+                    st.caption(cost_line(r))
+                    st.divider()
+                    if r.claims:
+                        n_bad = sum(1 for c in r.claims
+                                    if c.verdict and c.verdict.is_failure)
+                        st.caption(f"{len(r.claims)} claims, {n_bad} flagged")
+                        for c in r.claims:
+                            claim_block(c, show_evidence=False)
+                    else:
+                        st.caption("No claims audited in this configuration.")
 
-    with st.expander("Per-stage cost breakdown"):
-        import pandas as pd
-        rows = [{
-            "stage": l.stage, "model": l.model.split("/")[-1],
-            "tokens in": l.tokens_in, "tokens out": l.tokens_out,
-            "USD": round(l.cost_usd, 6),
-            "ms": round(l.latency_ms),
-            "cached": l.cache_hit, "shadow": l.is_shadow,
-        } for l in result.stage_logs]
+    # ---- RESULTS ---------------------------------------------------------
+    with tab_results:
+        runs = [d for d in sorted(cfg.runs_dir.iterdir())
+                if d.is_dir() and (d / "armA" / "summary.json").exists()]
+        if not runs:
+            st.info("No completed run yet. See START_HERE.md step 5.")
+            return
+        latest = runs[-1]
+        st.caption(f"From `{latest.name}` — 49 questions per configuration, "
+                   "HotpotQA distractor")
+
+        rows = {}
+        for arm_dir in sorted(latest.glob("arm*")):
+            s = load_json(arm_dir / "summary.json")
+            if s:
+                rows[arm_dir.name.replace("arm", "")] = s
         if rows:
-            st.dataframe(pd.DataFrame(rows), use_container_width=True)
+            import pandas as pd
+            keys = sorted(rows)
+            table = pd.DataFrame({
+                "Answer correct (judge)": [rows[k].get("judge_correct") for k in keys],
+                "Exact match (span)": [rows[k].get("exact_match_span") for k in keys],
+                "Faithfulness": [rows[k].get("faithfulness") for k in keys],
+                "Tokens per question": [rows[k].get("tokens_per_query") for k in keys],
+            }, index=[f"Configuration {k}" for k in keys]).round(3)
+            st.dataframe(table, use_container_width=True)
+
+        st.markdown(
+            "Verification raises faithfulness. Removing flagged claims is what "
+            "costs accuracy — configuration D keeps them and recovers it, at "
+            "the same token cost. Measured verifier precision is 0.247, which "
+            "is why flagging beats deleting. Full discussion in `ANALYSIS.md`.")
+
+        shots = [("plot_faithfulness.png", "Faithfulness"),
+                 ("plot_correctness.png", "Answer correctness"),
+                 ("plot_cost_quality.png", "What faithfulness costs"),
+                 ("plot_verdicts.png", "Verdict mix")]
+        pics = [(latest / f, cap) for f, cap in shots if (latest / f).exists()]
+        for i in range(0, len(pics), 2):
+            cc = st.columns(2)
+            for col, (path, cap) in zip(cc, pics[i:i + 2]):
+                col.image(str(path), caption=cap, use_container_width=True)
 
 
 if __name__ == "__main__":
