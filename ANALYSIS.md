@@ -17,6 +17,8 @@ support. Every number here comes from `runs/20261011_050216_final` and
 | Generator | `qwen2.5:7b-instruct`, run locally, **identical in all three arms** |
 | Helper stages | same model |
 | Verifier test set | 50 RAGTruth QA responses, 25 hallucinated + 25 clean |
+| Verifier backends | LLM judge, and an NLI cross-encoder for comparison (section 9) |
+| Arms | A, B, C, plus arm D (warn-only) added after the fact - section 10 |
 | Cache | disabled, so every arm is measured on equal terms |
 
 **The generator is a 7B local model.** This is a consequence of budget, not
@@ -51,7 +53,9 @@ so the gain is attributable to it.
 
 **It does not improve answer correctness, and costs 5.1x the tokens.**
 LLM-judge correctness falls from 0.429 to 0.367 and token F1 from 0.127 to
-0.080. Section 3 explains why.
+0.080. Section 3 explains why - and section 10 shows the loss is caused
+entirely by DELETING flagged claims, not by verifying them: a warn-only
+variant keeps the full faithfulness gain and recovers the correctness.
 
 **The agentic layer alone buys nothing.** Arm B matches arm A's faithfulness
 (0.753 vs 0.753) while scoring *worse* on every correctness metric, for 3.2x
@@ -93,7 +97,9 @@ answers *its own verifier approves of*, which is weaker than "arm C produces
 more faithful answers".
 
 The RAGTruth evaluation exists precisely to break that circle, because it
-compares the verifier against **human** labels rather than itself. What it
+compares the verifier against **human** labels rather than itself. Section 9
+pushes on this further by scoring a second, independent backend on the same
+claims. What it
 shows is that the verifier's approval is a noisy signal of actual
 groundedness. Any faithfulness figure in this report should be read with that
 precision of 0.247 in mind.
@@ -192,8 +198,9 @@ benchmark score - it lowers measured accuracy. It is worth it when the cost
 of an ungrounded claim exceeds the cost of a missing one, which is the
 high-stakes setting the proposal motivated. With precision at 0.247, however,
 a deployment would want the verdicts surfaced as *warnings for a human* rather
-than used to delete content automatically, which is how the demo presents
-them.
+than used to delete content automatically. Section 10 measures that variant
+(arm D) rather than merely recommending it: it retains the whole faithfulness
+gain at the same token cost, and is what the demo now presents.
 
 ---
 
@@ -214,7 +221,14 @@ them.
    What is measured is the verifier *as used inside this pipeline*, not in
    isolation.
 6. **One prompt was changed after seeing results** (section 4).
-7. **Wikipedia, not a high-stakes domain.** The proposal motivates the work
+7. **Arm D was run separately** from arms A-C, though on the same 50
+   questions with the same seed and the same cold-cache settings. Its results
+   are merged into the same report directory, and the comparison in section
+   10 should be read with that in mind.
+8. **The arm D vs baseline difference is one question** (22 correct against
+   21). Only the arm D vs arm C gap, four questions, is worth any weight, and
+   neither was significance tested.
+9. **Wikipedia, not a high-stakes domain.** The proposal motivates the work
    with legal, medical and governance text. The mechanism is
    domain-independent, but those domains have longer documents, denser
    cross-references, and a much higher cost for a false ENTAILED. Nothing
@@ -224,15 +238,125 @@ them.
 
 ## 8. What I would do next
 
-1. **Fix verifier precision.** At 0.247 it is the binding constraint on the
-   whole system - it is what makes arm C delete correct content. A DeBERTa-
-   MNLI cross-encoder would test whether the problem is this model or the
-   task framing, and it runs locally at no cost.
-2. **Re-run on a frontier generator.** One $5 top-up switches the provider
-   back to Claude Sonnet 5 with a single flag, and would separate "what the
-   architecture does" from "what a 7B model does".
-3. **Stop auto-dropping flagged claims.** Given the precision, surfacing
-   verdicts as warnings would likely preserve correctness while keeping the
-   grounding signal.
-4. **SelfCheckGPT as a reference-free baseline**, to quantify how much the
-   retrieval in verification actually contributes over self-consistency.
+*(Items 1 and 3 have since been done - see sections 9 and 10. This list is
+updated accordingly.)*
+
+1. ~~Swap in an NLI cross-encoder to fix verifier precision.~~ **Done, and it
+   did not work** (section 9). The replacement direction that follows from
+   that result: **reframe the verification task**. Almost all false positives
+   are UNSUPPORTED rather than CONTRADICTED, so asking the narrower question
+   "does the evidence *contradict* this claim?" - and treating silence as
+   unverified rather than as a failure - should raise precision sharply. That
+   is the experiment the data now points to.
+2. **Re-run on a frontier generator.** The pipeline is provider-agnostic, so
+   `--provider openrouter` switches the generator to Claude Sonnet 5 in one
+   flag. This would separate "what the architecture does" from "what a 7B
+   model does", which no amount of analysis here can disentangle.
+3. ~~Stop auto-dropping flagged claims.~~ **Done** (section 10). Warn-only
+   keeps the faithfulness gain and recovers the lost correctness, and is now
+   the recommended configuration.
+4. **Calibrate a confidence threshold.** The verifier returns a verdict but no
+   usable confidence. Flagging only high-confidence failures would trade
+   recall for precision deliberately rather than accidentally.
+5. **SelfCheckGPT as a reference-free baseline**, to quantify how much the
+   retrieval in verification contributes over mere self-consistency.
+
+---
+
+## 9. Does a purpose-built classifier fix the precision problem? No.
+
+Section 3 left an open question: is precision 0.247 a property of the 7B
+model being asked to behave like a classifier, or of the task itself? A
+DeBERTa cross-encoder trained on MNLI answers it. It is a dedicated entailment
+model, it runs locally at no cost, and its labels map directly onto ours
+(entailment / contradiction / neutral). Both backends were scored on the
+**same 272 claims from the same 50 RAGTruth responses**.
+
+| | LLM judge | NLI cross-encoder |
+|---|---|---|
+| Precision | **0.247** | 0.173 |
+| Recall | 0.688 | **0.812** |
+| F1 | **0.364** | 0.286 |
+| 3-way verdict accuracy | **0.706** | 0.515 |
+| False positives | 67 | **124** |
+
+**The cross-encoder is worse.** It finds more real hallucinations (recall
+0.812) but flags so much else that precision falls further, and three-way
+accuracy collapses from 0.706 to 0.515.
+
+The decisive figure is how often each backend fires against the truth:
+
+| | claims flagged |
+|---|---|
+| Actual hallucination rate in the sample | **12%** (32 / 272) |
+| LLM judge flags | 33% (89 / 272) |
+| NLI cross-encoder flags | 55% (150 / 272) |
+
+Both over-trigger - one nearly 3x, the other 4.5x.
+
+**Why.** NLI models are trained to judge strict logical entailment between
+short, clean sentence pairs. "Is this claim supported by this document?" is a
+looser and genuinely different question. A claim can be true, well grounded
+and supported in context while not being *strictly entailed* by any single
+retrieved passage, and a strict entailment model labels that `neutral`, which
+maps to UNSUPPORTED. The false-positive mass sits almost entirely in that
+bucket.
+
+**Conclusion: the precision ceiling is the task formulation, not the model.**
+Swapping in a better classifier does not help, because both models are being
+asked a question whose correct answer is not the one the task needs. This is
+a more useful result than a fix would have been - it redirects the next
+attempt from model choice to task design.
+
+A caution on method, worth recording. On four hand-picked examples the
+cross-encoder scored 4/4, including a case the LLM verifier got wrong, and
+that looked like strong evidence it was better. On all 272 claims it is
+clearly worse. Four examples predicted the opposite of what the full sample
+showed.
+
+---
+
+## 10. Drop the flagged claim, or keep it and warn? Keep it.
+
+Section 3 showed that arm C deletes correct content because three in four of
+its flags are wrong. Arm D tests the alternative directly: it is **identical
+to arm C in every flag except one** - a claim that fails verification is kept
+in the answer carrying its verdict badge, rather than being removed. A test
+pins that the two arms differ in that single field, so the comparison cannot
+drift.
+
+| | A baseline | C delete | D warn-only |
+|---|---|---|---|
+| LLM-judge correct | 0.429 | 0.367 | **0.449** |
+| Token F1 | **0.127** | 0.080 | 0.086 |
+| Faithfulness | 0.753 | **0.788** | **0.788** |
+| Claims corrected | 0 | 19 | 19 |
+| Claims **deleted** | 0 | **15** | **0** |
+| Tokens / query | 857 | 4,353 | 4,353 |
+
+**Warn-only keeps the entire faithfulness gain while giving back the
+correctness that deletion cost, at identical token cost.** Arm D matches arm
+C's faithfulness exactly (0.788), because the verdicts are the same verdicts -
+only the action taken on them differs.
+
+The finding separates two things the corrective loop does, which arm C had
+conflated:
+
+- **Rewriting a failed claim against fresh evidence helps.** Both arms do it
+  19 times, and arm D shows the benefit is retained.
+- **Deleting a claim that cannot be rescued hurts.** It is the only
+  difference between the arms, and it costs 4 questions of judge-correctness.
+
+**Caveat on size.** At n = 49, arm D's 0.449 against arm C's 0.367 is 22
+correct answers against 18 - a four-question difference. Against baseline it
+is 22 against 21, a single question, which is noise and should not be read as
+warn-only *beating* plain RAG. The defensible claim is the narrower one:
+**warn-only is at least as good as baseline on correctness while adding a
+faithfulness signal, and it is clearly better than deleting.** No significance
+testing was performed.
+
+**Recommendation.** Arm D is the configuration to deploy, and it is what the
+demo now shows: surface a verdict as a warning next to the claim and let a
+reader judge, rather than silently removing content on a signal that is wrong
+three times out of four. That recommendation was already in section 6 on the
+strength of the precision figure; this measures it.

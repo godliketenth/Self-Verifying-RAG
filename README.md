@@ -88,8 +88,27 @@ pytest tests/test_asymmetry.py -q    # the executable proof
 
 ## Results
 
-See [`ANALYSIS.md`](ANALYSIS.md) for the full discussion, and
-`runs/<latest>/ablation_table.md` plus `cost_latency_table.md` for the numbers.
+Full discussion in [`ANALYSIS.md`](ANALYSIS.md); numbers in
+`runs/<latest>/ablation_table.md` and `cost_latency_table.md`.
+
+| | A baseline | B agentic | C full, delete | D full, warn-only |
+|---|---|---|---|---|
+| LLM-judge correct | 0.429 | 0.367 | 0.367 | **0.449** |
+| Faithfulness | 0.753 | 0.753 | **0.788** | **0.788** |
+| Tokens / query | **857** | 2,775 | 4,353 | 4,353 |
+
+Three findings, all argued in full in `ANALYSIS.md`:
+
+- **Claim-level verification improves faithfulness** (C and D over B, which
+  shares their retrieval), at roughly 5x the tokens.
+- **Deleting a flagged claim is what costs accuracy, not verifying it.**
+  Measured verifier precision is 0.247, so most flags are false positives;
+  arm D keeps the claim and badges it instead, retaining the whole
+  faithfulness gain at the same cost. **Arm D is the recommended
+  configuration.**
+- **A purpose-built NLI cross-encoder did not fix precision** - it was worse
+  (0.173). Both backends over-flag against a true 12% hallucination rate, so
+  the ceiling is the task formulation rather than the model.
 
 One result worth stating up front, because it justifies a design choice -
 retrieval recall@5 over 30 questions:
