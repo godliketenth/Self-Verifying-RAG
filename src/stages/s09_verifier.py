@@ -174,6 +174,20 @@ def verify_claim(
         ev_list.append(Evidence(pid=match.pid, title=match.title,
                                 span=span or match.text[:200],
                                 full_text=match.text))
+    else:
+        # The model cited no passage, which is the NORMAL and correct reply
+        # for an UNSUPPORTED claim - there is nothing to cite. But showing a
+        # flagged claim with no evidence at all is unconvincing and looks
+        # like a retrieval failure, which it is not.
+        #
+        # So we attach what the verifier actually LOOKED AT, with an empty
+        # span to mark it as considered-but-not-supporting. The UI renders
+        # that as "evidence considered", which is the honest and far more
+        # informative statement: these passages were searched, and none of
+        # them supports the claim.
+        for p in evidence[:2]:
+            ev_list.append(Evidence(pid=p.pid, title=p.title, span="",
+                                    full_text=p.text))
     return verdict, ev_list, reasoning
 
 

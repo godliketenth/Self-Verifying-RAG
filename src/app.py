@@ -64,6 +64,20 @@ def load_demo_questions(cfg) -> list[dict]:
     return json.loads(f.read_text())
 
 
+def load_verified_demos(cfg) -> list[dict]:
+    """
+    Questions that DID flag or correct a claim in the measured evaluation run.
+
+    Mined from the logs rather than hand-picked, so the demo shows behaviour
+    that was actually observed and is reproducible at the same seed.
+    """
+    f = cfg.data_dir / "demo_verified.json"
+    if not f.exists():
+        return []
+    import json
+    return json.loads(f.read_text())
+
+
 # Loading the embedding model and FAISS index takes a few seconds; cache it
 # so only the first question in a session pays that cost.
 @st.cache_resource
@@ -110,9 +124,24 @@ def main() -> None:
     if "question" not in st.session_state:
         st.session_state.question = ANSWERABLE[0]
 
-    tab_ok, tab_missing = st.tabs(
-        ["Evidence in corpus", "Evidence MISSING from corpus"]
+    tab_catch, tab_ok, tab_missing = st.tabs(
+        ["Verification CATCHES a claim", "Clean answer",
+         "Evidence missing from corpus"]
     )
+    with tab_catch:
+        st.caption(
+            "These questions flagged or corrected at least one claim in the "
+            "measured evaluation run. They are taken from the logs, not "
+            "hand-picked, and reproduce at the same seed. **Run these on arm "
+            "C to see the correction loop fire.**"
+        )
+        for d in load_verified_demos(cfg)[:5]:
+            badge = ("contradiction found" if d["has_contradiction"]
+                     else f"{d['n_flagged']} claim(s) flagged")
+            if st.button(d["question"], key=f"catch_{d['question'][:24]}",
+                         use_container_width=True):
+                st.session_state.question = d["question"]
+            st.caption(f"observed: {badge} - gold answer: *{d['gold_answer']}*")
     with tab_ok:
         st.caption("Supporting articles are indexed. Claims should verify as "
                    "ENTAILED.")
@@ -166,8 +195,24 @@ def main() -> None:
     st.success(result.final_answer or "(no answer produced)")
 
     if result.claims and result.draft_answer != result.final_answer:
-        with st.expander("Draft answer, before verification"):
-            st.write(result.draft_answer)
+        dropped = [c for c in result.claims
+                   if c.was_corrected and not c.text.strip()]
+        st.markdown("**Draft answer, before verification**")
+        st.info(result.draft_answer)
+        if dropped:
+            # Showing this is the point, not an embarrassment. Measured
+            # verifier precision is 0.247, so some dropped claims were
+            # correct. A viewer must be able to see what verification COST,
+            # not only what it caught - that is the honest comparison, and it
+            # is the evidence behind ANALYSIS.md's recommendation to surface
+            # verdicts as warnings rather than delete content automatically.
+            st.warning(
+                f"Verification removed {len(dropped)} claim(s). On the "
+                "RAGTruth evaluation this verifier had **precision 0.247** - "
+                "roughly three in four flags are false positives - so some "
+                "removed claims were correct. Compare the draft above with "
+                "the verified answer to judge the trade-off."
+            )
 
     # ---- per-claim verdicts: the core of the demo ------------------------
     if result.claims:
@@ -205,14 +250,22 @@ def main() -> None:
                 st.markdown(f"**Verification query:** `{claim.verification_query}`")
                 if claim.reasoning:
                     st.markdown(f"**Verifier's reasoning:** {claim.reasoning}")
-                if claim.evidence:
-                    for ev in claim.evidence:
+                cited = [e for e in claim.evidence if e.span]
+                considered = [e for e in claim.evidence if not e.span]
+                if cited:
+                    for ev in cited:
                         st.markdown(f"**[{ev.pid}] {ev.title}**")
                         st.markdown(f"> {ev.span}")
                         if ev.full_text:
                             st.caption(ev.full_text[:600])
-                else:
-                    st.caption("No supporting evidence was found in the corpus.")
+                if considered:
+                    st.markdown("**Passages considered** - none of these "
+                                "supported the claim:")
+                    for ev in considered:
+                        st.markdown(f"- **[{ev.pid}] {ev.title}**")
+                        st.caption(ev.full_text[:400])
+                if not claim.evidence:
+                    st.caption("No passages were retrieved for this claim.")
 
     # ---- the agent's retrieval decisions ---------------------------------
     st.subheader("Pipeline trace")

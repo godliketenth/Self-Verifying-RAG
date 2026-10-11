@@ -54,9 +54,13 @@ def format_verified_answer(draft: str, claims: list[Claim]) -> str:
         lines.append(f"  {n}. {badge} {c.text}")
         if c.was_corrected:
             lines.append(f"       corrected from: {c.original_text}")
-        if c.evidence:
+        if c.evidence and c.evidence[0].span:
             e = c.evidence[0]
             lines.append(f"       evidence [{e.pid}] {e.title}: \"{e.span[:140]}\"")
-        elif c.reasoning:
+        elif c.evidence:
+            # Empty span means "considered, but did not support the claim".
+            titles = ", ".join(f"[{e.pid}] {e.title}" for e in c.evidence)
+            lines.append(f"       considered (none supported this): {titles}")
+        if c.reasoning:
             lines.append(f"       reason: {c.reasoning}")
     return "\n".join(lines)
