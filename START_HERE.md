@@ -103,10 +103,11 @@ reproduce. Expand a flagged claim to see the evidence that was examined.
 | File | What it gives you |
 |---|---|
 | `ANALYSIS.md` | **The results and what they mean. Read this first.** |
-| `VIVA.md` | Likely examiner questions, with answers |
-| `EXPLANATION.md` | Every file explained, and the concepts behind them |
-| `README.md` | Overview and architecture diagram |
-| `CLAUDE.md` | Conventions, including the asymmetry rule |
+| `README.md` | Overview, architecture diagram, and the headline numbers |
+
+For the code itself, `src/pipeline.py` is the place to start: it is the
+orchestrator, and every stage it calls lives in `src/stages/` named in
+pipeline order.
 
 ## If something breaks
 

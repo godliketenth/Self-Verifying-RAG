@@ -19,3 +19,11 @@ runs/
 .vscode/
 midTermReport.pdf
 slide-*.jpg
+
+# Personal / working files - kept locally, not part of the published repo
+VIVA.md
+CLAUDE.md
+PLAN.md
+EXPLANATION.md
+midTermReport.pptx
+midTermReport.BACKUP.pptx

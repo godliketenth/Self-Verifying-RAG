@@ -12,7 +12,7 @@ evidence span that decided it. Failed claims trigger targeted re-retrieval and
 regeneration of **only those claims**, not a full restart.
 
 > **New here? Read [`START_HERE.md`](START_HERE.md) first** - five commands to
-> a running system. Then [`EXPLANATION.md`](EXPLANATION.md) for how it works.
+> a running system. Then [`ANALYSIS.md`](ANALYSIS.md) for what it found.
 
 ---
 
