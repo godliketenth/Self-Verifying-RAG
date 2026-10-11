@@ -213,6 +213,26 @@ class PipelineResult:
     def n_llm_calls(self, include_shadow: bool = False) -> int:
         return len(self._logs(include_shadow))
 
+    def latency_ms(self, include_shadow: bool = False) -> float:
+        """
+        Wall-clock latency for this question, excluding measurement-only work.
+
+        total_latency_ms is the raw wall clock, which for arms A and B
+        INCLUDES shadow verification - calls made purely so we can report
+        their faithfulness, and which those arms would never make in
+        deployment. Counting that time made arm B look slower than arm C even
+        though C does strictly more work.
+
+        Cost already excludes shadow calls, so latency must too, or the
+        cost/latency table contradicts itself. We subtract the shadow calls'
+        own latency and keep everything else, so local retrieval time (FAISS
+        and BM25, which cost no API call but real milliseconds) still counts.
+        """
+        if include_shadow:
+            return self.total_latency_ms
+        shadow_ms = sum(l.latency_ms for l in self.stage_logs if l.is_shadow)
+        return max(0.0, self.total_latency_ms - shadow_ms)
+
     def faithfulness(self) -> float | None:
         """
         Fraction of claims the verifier marked ENTAILED.
@@ -243,6 +263,7 @@ class PipelineResult:
             "correction_rounds": self.correction_rounds,
             "stage_logs": [l.to_dict() for l in self.stage_logs],
             "total_latency_ms": self.total_latency_ms,
+            "latency_ms": self.latency_ms(),
             "total_tokens": self.total_tokens(),
             "total_cost_usd": self.total_cost_usd(),
             "n_llm_calls": self.n_llm_calls(),

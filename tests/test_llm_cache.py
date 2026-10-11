@@ -117,3 +117,24 @@ def test_take_logs_resets_between_queries(cfg):
     client.complete("b", stage="s06_generator")
     assert len(client.take_logs()) == 2
     assert client.take_logs() == []
+
+
+def test_latency_excludes_shadow_calls_like_cost_does():
+    """
+    REGRESSION. Arm B's wall clock included shadow verification - calls made
+    only to measure its faithfulness, never made in deployment. That made arm
+    B appear SLOWER than arm C in a live run, although C does strictly more
+    work, and it contradicted the cost column, which already excluded shadow.
+    """
+    from src.types import PipelineResult, StageLog
+    r = PipelineResult(question="q", arm="B")
+    r.total_latency_ms = 10_000.0
+    r.stage_logs = [
+        StageLog(stage="s06_generator", latency_ms=4_000.0),
+        StageLog(stage="s09_verifier", latency_ms=3_000.0, is_shadow=True),
+    ]
+    assert r.latency_ms() == 7_000.0                     # shadow removed
+    assert r.latency_ms(include_shadow=True) == 10_000.0
+    # Retrieval time (wall clock not attributable to any LLM call) is kept:
+    # 10000 - 3000 shadow = 7000, which is more than the 4000 of LLM time.
+    assert r.latency_ms() > 4_000.0

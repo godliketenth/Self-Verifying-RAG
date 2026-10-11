@@ -285,27 +285,47 @@ def write_tables(summaries: dict[str, dict], out: Path, meta: dict) -> None:
     print("  wrote ablation_table.md")
 
     # --- cost table ---
+    provider = meta.get("provider", "")
+    gen = meta.get("generator_model", "")
+    free = all((summaries[a].get("usd_per_query") or 0) == 0 for a in arms)
+
     lines = [
         "# Cost and latency",
         "",
-        "LLM calls and tokens are the **primary** cost metric; wall-clock "
-        "latency is secondary, because requests route through OpenRouter and "
-        "carry queueing variance we do not control.",
+        f"- provider: `{provider}`  generator: `{gen}`",
+        "",
+        "LLM calls and tokens are the **primary** cost metric. Wall-clock "
+        "latency is secondary: it depends on the serving environment "
+        + ("(local inference, so it reflects this machine's throughput rather "
+           "than any hosted service)" if provider == "ollama"
+           else "(a hosted API, which adds queueing variance we do not control)")
+        + ", whereas token counts are a property of the pipeline itself.",
+        "",
+        "Latency figures **exclude shadow-verification time**, matching the "
+        "cost columns. Arms A and B run the verifier only to make their "
+        "faithfulness measurable; they would never do so in deployment, and "
+        "charging them that time made arm B appear slower than arm C even "
+        "though C does strictly more work.",
         "",
         head, sep,
         _row("LLM calls / query", summaries, "llm_calls_per_query", "{:.1f}"),
         _row("Tokens / query", summaries, "tokens_per_query", "{:.0f}"),
         _row("USD / query", summaries, "usd_per_query", "${:.5f}"),
         _row("USD / 1000 queries", summaries, "usd_per_query", "${:.2f}", 1000),
-        "",
-        "If the USD rows read $0.00000 the run used a free tier, where price "
-        "per token is zero by definition. The token and call-count rows above "
-        "are the meaningful cost comparison in that case - which is why the "
-        "project treats them as primary throughout.",
         _row("Latency median (s)", summaries, "latency_median_ms", "{:.2f}", 0.001),
         _row("Latency p90 (s)", summaries, "latency_p90_ms", "{:.2f}", 0.001),
         "",
     ]
+    if free:
+        lines += [
+            "The USD rows are zero because this run used local inference, "
+            "where price per token is zero by definition. That is exactly why "
+            "the project treats **tokens and call counts** as the primary "
+            "cost metric throughout: they stay meaningful regardless of who "
+            "is billing, and they are what a hosted deployment would be "
+            "charged for.",
+            "",
+        ]
     # the overhead multiple, which is the number the viva will ask about
     base = summaries.get("A", {}).get("tokens_per_query") or 0
     if base:

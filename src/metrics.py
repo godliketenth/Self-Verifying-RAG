@@ -249,7 +249,8 @@ def aggregate(results: list[PipelineResult],
         return {"n": 0, "n_errors": len(results)}
 
     faiths = [f for f in (r.faithfulness() for r in ok) if f is not None]
-    latencies = [r.total_latency_ms for r in ok]
+    # Exclude shadow-verification time, matching how cost excludes it.
+    latencies = [r.latency_ms() for r in ok]
 
     verdicts: Counter[str] = Counter()
     for r in ok:
