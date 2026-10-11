@@ -49,33 +49,78 @@ st.set_page_config(page_title="Self-Verifying Agentic RAG",
 
 # Verdict colours are the reserved status palette used throughout the report,
 # so a verdict here and a verdict in a chart mean the same thing.
+# Verdict -> (label, CSS class, plain-language gloss). The class carries the
+# colour so the stylesheet can give it a light and a dark step; an inline hex
+# could only ever suit one theme.
 VERDICT = {
-    Verdict.ENTAILED:     ("Entailed", "#0ca30c",
+    Verdict.ENTAILED:     ("Entailed", "ok",
                            "the evidence supports this"),
-    Verdict.UNSUPPORTED:  ("Unsupported", "#b07d00",
+    Verdict.UNSUPPORTED:  ("Unsupported", "warn",
                            "the evidence is silent on this"),
-    Verdict.CONTRADICTED: ("Contradicted", "#d03b3b",
+    Verdict.CONTRADICTED: ("Contradicted", "bad",
                            "the evidence disagrees with this"),
 }
 
 CSS = """
 <style>
-  /* The claim under audit is the largest thing on screen. */
+  /* Colours adapt to Streamlit's light or dark theme. Body text inherits the
+     theme's own text colour rather than hardcoding one - hardcoding near-black
+     made every claim invisible against the dark theme. Only the verdict
+     colours are set explicitly, because they carry meaning, and each has a
+     light and a dark step chosen to clear 3:1 against that theme's surface. */
+  :root {
+    --ink-soft: #6b6762;
+    --rule-soft: #ddd9d2;
+    --v-ok:   #0ca30c;   /* 3.27:1 on white */
+    --v-warn: #b07d00;   /* amber darkened; #fab219 is 1.79:1 on white */
+    --v-bad:  #d03b3b;   /* 4.68:1 on white */
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { %DARK% }
+  }
+
   .claim-row { border-left: 3px solid var(--rule); padding: .55rem 0 .55rem .85rem;
                margin: .1rem 0 .55rem 0; }
-  .claim-text { font-size: 1.03rem; line-height: 1.5; color: #1a1a1a; }
-  .claim-verdict { font-size: .78rem; font-weight: 700; letter-spacing: .01em;
-                   color: var(--rule); }
-  .claim-why { font-size: .78rem; color: #6b6762; margin-left: .5rem;
-               font-weight: 400; letter-spacing: 0; }
-  .claim-was { font-size: .82rem; color: #6b6762; margin-top: .25rem; }
-  .ev { border-left: 2px solid #ddd9d2; padding-left: .8rem; margin:.4rem 0;
-        font-size: .86rem; color: #3b3835; }
-  .ev-src { font-size: .76rem; color: #8a857e; }
-  .answer { font-size: 1.12rem; line-height: 1.6; color: #16150f; }
-  .muted { color: #6b6762; font-size: .85rem; }
+  .claim-row.ok   { --rule: var(--v-ok); }
+  .claim-row.warn { --rule: var(--v-warn); }
+  .claim-row.bad  { --rule: var(--v-bad); }
+  .claim-row.none { --rule: var(--ink-soft); }
+
+  /* inherit: follows whichever theme is active */
+  .claim-text { font-size: 1.03rem; line-height: 1.5; color: inherit; }
+  .claim-verdict { font-size: .78rem; font-weight: 700; color: var(--rule); }
+  .claim-why { font-size: .78rem; color: var(--ink-soft); margin-left: .5rem;
+               font-weight: 400; }
+  .claim-was { font-size: .82rem; color: var(--ink-soft); margin-top: .25rem; }
+  .ev { border-left: 2px solid var(--rule-soft); padding-left: .8rem;
+        margin: .4rem 0; font-size: .88rem; color: inherit; opacity: .92; }
+  .ev-src { font-size: .76rem; color: var(--ink-soft); opacity: 1; }
+  .answer { font-size: 1.12rem; line-height: 1.6; color: inherit; }
+  .muted { color: var(--ink-soft); font-size: .85rem; }
 </style>
 """
+
+
+@st.cache_resource
+def theme_css() -> str:
+    """
+    Build the stylesheet for whichever theme is actually in force.
+
+    Streamlit follows the browser's preference when `theme.base` is unset, in
+    which case the prefers-color-scheme media query matches it exactly. If a
+    theme IS pinned in config, the media query would disagree with what
+    Streamlit renders, so we emit that theme's values directly instead.
+    """
+    dark_vars = ("--ink-soft:#a9a49b; --rule-soft:#3b3833; "
+                 "--v-ok:#35c235; --v-warn:#fab219; --v-bad:#ef6b6b;")
+    base = st.get_option("theme.base")
+    if base == "dark":
+        return CSS.replace("%DARK%", dark_vars).replace(
+            "@media (prefers-color-scheme: dark)", "@media all")
+    if base == "light":
+        # Drop the dark block entirely; the :root defaults are the light steps.
+        return CSS.replace("%DARK%", "")
+    return CSS.replace("%DARK%", dark_vars)
 
 
 @st.cache_resource
@@ -93,13 +138,13 @@ def load_json(p: Path):
 
 def claim_block(claim, show_evidence: bool = True) -> None:
     """One audited claim: verdict rule, the claim, then what settled it."""
-    label, colour, why = VERDICT.get(
-        claim.verdict, ("Unverified", "#8a857e", "no verdict recorded"))
+    label, css, why = VERDICT.get(
+        claim.verdict, ("Unverified", "none", "no verdict recorded"))
     text = claim.text.strip() or claim.original_text.strip()
     removed = claim.was_corrected and not claim.text.strip()
 
     st.markdown(
-        f"<div class='claim-row' style='--rule:{colour}'>"
+        f"<div class='claim-row {css}'>"
         f"<div class='claim-verdict'>{label}"
         f"<span class='claim-why'>{why}</span></div>"
         f"<div class='claim-text'>{text}</div>"
@@ -146,7 +191,7 @@ def execute(question: str, arm_key: str, mock: bool, retriever, cfg):
 # ---------------------------------------------------------------------------
 
 def main() -> None:
-    st.markdown(CSS, unsafe_allow_html=True)
+    st.markdown(theme_css(), unsafe_allow_html=True)
     st.title("Self-Verifying Agentic RAG")
     st.markdown(
         "<div class='muted'>Every sentence of the answer is checked against "
