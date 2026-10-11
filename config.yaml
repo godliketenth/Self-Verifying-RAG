@@ -81,6 +81,10 @@ retrieval:
   claim_top_k: 3              # passages retrieved per claim during verification
   candidates_per_retriever: 20  # how deep dense/BM25 go before fusion
   rrf_k: 60                   # Reciprocal Rank Fusion constant (standard value)
+  # Alternative Stage 9 backend. A purpose-built entailment classifier, used
+  # to test whether the LLM verifier's 0.247 precision is a property of that
+  # model or of the task. Its three labels map directly onto our verdicts.
+  nli_model: "cross-encoder/nli-deberta-v3-base"
 
 # --- Data construction -----------------------------------------------------
 data:
@@ -113,6 +117,16 @@ pipeline:
   min_relevant_passages: 2    # fewer than this triggers one retrieval re-plan
   max_replan_rounds: 1
   max_correction_rounds: 1
+  # When a claim fails verification, do we DELETE it from the answer, or keep
+  # it and badge it as unverified?
+  #
+  # Measured verifier precision is 0.247 - roughly three in four flags are
+  # false positives - so deleting on a flag removes correct content and is
+  # what drove arm C's answer correctness below baseline. Arm D keeps the
+  # claim and surfaces the warning instead, which is what ANALYSIS.md
+  # recommends for deployment. This flag is what makes that testable rather
+  # than merely asserted.
+  drop_failed_claims: true
 
 # --- Paths -----------------------------------------------------------------
 paths:

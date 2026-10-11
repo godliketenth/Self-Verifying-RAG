@@ -35,6 +35,9 @@ def assemble_answer(draft: str, claims: list[Claim]) -> str:
     if not claims:
         return draft
 
+    # A claim kept by warn-only mode still has text, so it survives here and
+    # carries its verdict badge in the rendering below. Only claims actually
+    # emptied by the drop path disappear from the answer.
     surviving = [c for c in claims if c.text.strip()]
     if not surviving:
         return ("Every claim in the draft answer failed verification against "

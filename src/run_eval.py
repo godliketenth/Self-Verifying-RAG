@@ -200,7 +200,8 @@ def main() -> None:
         description="Run the Self-Verifying Agentic RAG ablation."
     )
     ap.add_argument("--arm", default="all",
-                    help="A, B, C, or all (default: all)")
+                    help="A, B, C, D, a comma-separated list, "
+                         "'all' (A/B/C) or 'all+d' (A/B/C/D)")
     ap.add_argument("--n", type=int, default=20,
                     help="number of questions; 0 means all (default: 20)")
     ap.add_argument("--mock", action="store_true",
@@ -220,7 +221,14 @@ def main() -> None:
     cfg = load_config(require_api_key=not args.mock, provider=args.provider)
     seed = args.seed if args.seed is not None else cfg.seed
 
-    arms = ["A", "B", "C"] if args.arm.lower() == "all" else [args.arm.upper()]
+    # "all" stays the three-arm ablation from the proposal. Arm D (warn-only)
+    # is opt-in, so the headline table keeps comparing like with like.
+    if args.arm.lower() == "all":
+        arms = ["A", "B", "C"]
+    elif args.arm.lower() in ("all+d", "alld", "abcd"):
+        arms = ["A", "B", "C", "D"]
+    else:
+        arms = [a.strip().upper() for a in args.arm.split(",")]
     for a in arms:
         if a not in ARMS:
             raise SystemExit(f"Unknown arm {a!r}. Choose A, B, C or all.")

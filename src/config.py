@@ -47,6 +47,9 @@ class Arm:
     verify: bool              # stages 7-9 acting on the answer (correction on)
     verify_shadow: bool       # stages 7-9 for measurement only (no correction)
     correction_rounds: int    # stage 9 -> 8 loop; 0 disables it
+    # None = use config's drop_failed_claims. False = keep flagged claims in
+    # the answer and badge them instead of deleting them.
+    drop_failed: bool | None = None
 
 
 ARMS: dict[str, Arm] = {
@@ -66,9 +69,19 @@ ARMS: dict[str, Arm] = {
     "C": Arm(
         name="C",
         description="Full system: agentic retrieval plus the claim-level "
-                    "verification loop.",
+                    "verification loop, deleting claims that fail.",
         router=True, planner=True, relevance=True,
         verify=True, verify_shadow=False, correction_rounds=1,
+        drop_failed=True,
+    ),
+    "D": Arm(
+        name="D",
+        description="Full system in warn-only mode: identical to C, but a "
+                    "claim that fails verification is kept and badged rather "
+                    "than deleted.",
+        router=True, planner=True, relevance=True,
+        verify=True, verify_shadow=False, correction_rounds=1,
+        drop_failed=False,
     ),
 }
 
@@ -125,6 +138,7 @@ class RetrievalConfig:
     claim_top_k: int
     candidates_per_retriever: int
     rrf_k: int
+    nli_model: str
 
 
 @dataclass
@@ -149,6 +163,7 @@ class PipelineConfig:
     min_relevant_passages: int
     max_replan_rounds: int
     max_correction_rounds: int
+    drop_failed_claims: bool
 
 
 @dataclass

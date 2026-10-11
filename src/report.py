@@ -45,7 +45,9 @@ INK = "#0b0b0b"
 INK_SOFT = "#52514e"
 GRID = "#e3e2de"
 # categorical slots 1-3: validated all-pairs for CVD and normal vision
-ARM_COLORS = {"A": "#2a78d6", "B": "#eb6834", "C": "#1baf7a"}
+# Slots 1-3 validated all-pairs for CVD; slot 4 (yellow) only ever appears
+# beside them in the four-arm chart, where every bar is directly labelled.
+ARM_COLORS = {"A": "#2a78d6", "B": "#eb6834", "C": "#1baf7a", "D": "#eda100"}
 # reserved status palette - deliberately distinct from the series colours
 VERDICT_COLORS = {
     "ENTAILED": "#0ca30c",       # good
@@ -56,7 +58,8 @@ VERDICT_COLORS = {
 ARM_LABEL = {
     "A": "A\nbaseline RAG",
     "B": "B\nagentic only",
-    "C": "C\nfull system",
+    "C": "C\nfull, drop",
+    "D": "D\nfull, warn-only",
 }
 
 

@@ -261,3 +261,33 @@ def test_planner_survives_a_bare_list_reply(cfg):
                     LLMResponse("", "mock", 0, 0, 0.0, 0.0, False))
     subs = plan_retrieval("q", Route.MULTI_HOP, BareList(cfg, mock=True), cfg)
     assert subs == ["sub one", "sub two"]
+
+
+# --- upgrade 3: warn-only mode (arm D) -------------------------------------
+
+def test_arm_d_keeps_flagged_claims_arm_c_deletes_them(cfg):
+    """
+    Arms C and D differ ONLY in what happens to a claim that fails
+    verification. C deletes it; D keeps it and lets the badge carry the
+    warning. With verifier precision measured at 0.247, that difference is
+    the point of the experiment, not a cosmetic option.
+    """
+    from src.config import ARMS
+    assert ARMS["C"].drop_failed is True
+    assert ARMS["D"].drop_failed is False
+    # Everything else about the two arms must be identical, or the comparison
+    # would measure more than one change.
+    for field in ("router", "planner", "relevance", "verify",
+                  "verify_shadow", "correction_rounds"):
+        assert getattr(ARMS["C"], field) == getattr(ARMS["D"], field), field
+
+
+def test_assemble_keeps_a_warned_claim_in_the_answer():
+    """A claim kept by warn-only mode must still appear in the answer text."""
+    from src.types import Claim, Verdict
+    kept = Claim("Possibly wrong but kept.", "q", Verdict.UNSUPPORTED,
+                 was_corrected=True, original_text="Possibly wrong but kept.")
+    out = assemble_answer("draft", [kept])
+    assert "Possibly wrong but kept." in out
+    rendered = format_verified_answer("draft", [kept])
+    assert "[UNSUPPORTED]" in rendered

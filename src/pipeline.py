@@ -220,11 +220,24 @@ def _run_correction_loop(
                     fresh.append(p)
 
             # 2. rewrite or drop
+            #
+            # drop_failed=False is WARN-ONLY mode (arm D): a claim the
+            # corrector cannot rescue stays in the answer carrying its
+            # verdict badge, instead of being deleted. With measured verifier
+            # precision at 0.247, deleting on a flag removes correct content
+            # roughly three times out of four, so warn-only is the behaviour
+            # ANALYSIS.md recommends for deployment - and this is what lets
+            # us measure the difference rather than just assert it.
+            drop = (arm.drop_failed if arm.drop_failed is not None
+                    else cfg.pipeline.drop_failed_claims)
+
             new_text, dropped = regenerate_claim(claim, fresh, client, cfg)
             if dropped or not new_text:
                 claim.original_text = claim.text
                 claim.was_corrected = True
-                claim.text = ""          # removed from the final answer
+                if drop:
+                    claim.text = ""      # removed from the final answer
+                # else: keep claim.text as-is; the badge carries the warning
                 continue
 
             # 3. re-verify the rewrite under the same asymmetry rule

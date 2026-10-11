@@ -37,6 +37,7 @@ from src.llm import LLMClient
 from src.metrics import claim_detection_scores, map_spans_to_claims
 from src.stages.s07_decomposer import decompose_answer
 from src.stages.s09_verifier import verify_claims
+from src.stages.s09_verifier_nli import verify_claim_nli
 from src.types import Passage, Verdict
 
 
@@ -46,7 +47,10 @@ def main() -> None:
     ap.add_argument("--mock", action="store_true")
     ap.add_argument("--no-cache", action="store_true")
     ap.add_argument("--provider", default=None,
-                    help="override config.yaml: gemini | openrouter")
+                    help="override config.yaml: ollama | gemini | openrouter")
+    ap.add_argument("--verifier", default="llm", choices=["llm", "nli"],
+                    help="which Stage 9 backend to score: llm judge or NLI "
+                         "cross-encoder (default: llm)")
     args = ap.parse_args()
 
     cfg = load_config(require_api_key=not args.mock, provider=args.provider)
@@ -84,12 +88,19 @@ def main() -> None:
         #    claim against the evidence the original system actually had.
         evidence = [Passage(pid=p["pid"], title=p["title"], text=p["text"])
                     for p in row["passages"]]
-        verify_claims(
-            claims, {c.text: evidence for c in claims}, client, cfg,
-            # The asymmetry rule still applies: the verifier must not see the
-            # full response it came from, nor the original question.
-            forbidden=[response, row["question"]],
-        )
+        if args.verifier == "nli":
+            # The cross-encoder takes the claim and the evidence and nothing
+            # else, so the asymmetry rule holds structurally.
+            for c in claims:
+                v, ev, reason = verify_claim_nli(c.text, evidence, cfg)
+                c.verdict, c.evidence, c.reasoning = v, ev, reason
+        else:
+            verify_claims(
+                claims, {c.text: evidence for c in claims}, client, cfg,
+                # The asymmetry rule still applies: the verifier must not see
+                # the full response it came from, nor the original question.
+                forbidden=[response, row["question"]],
+            )
 
         # 3. human spans -> per-claim gold labels
         gold, unmapped = map_spans_to_claims(
@@ -128,13 +139,15 @@ def main() -> None:
         100 * unmapped_total / max(1, sum(r["n_gold_spans"] for r in per_row))
     )
 
-    out_dir = cfg.runs_dir / f"ragtruth_{datetime.now():%Y%m%d_%H%M%S}"
+    scores["verifier_backend"] = args.verifier
+    out_dir = cfg.runs_dir / (f"ragtruth_{args.verifier}_"
+                              f"{datetime.now():%Y%m%d_%H%M%S}")
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "scores.json").write_text(json.dumps(scores, indent=2))
     (out_dir / "per_response.json").write_text(json.dumps(per_row, indent=2))
 
     print(f"\n{'=' * 60}")
-    print("VERIFIER vs RAGTruth HUMAN LABELS")
+    print(f"VERIFIER vs RAGTruth HUMAN LABELS  (backend: {args.verifier})")
     print(f"{'=' * 60}")
     print(f"  responses            : {scores['n_responses']}")
     print(f"  claims               : {scores['n_claims']}")
